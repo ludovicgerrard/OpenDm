@@ -34,14 +34,14 @@ export default function Home() {
               <span className="text-muted-foreground">{selected.length ? `${selected.length} selected` : `${downloads.length} downloads`}</span>
               {selected.length > 0 && <Button size="sm" variant="ghost" className="ml-auto text-destructive animate-in fade-in slide-in-from-right-2" onClick={() => remove(selected)}><Trash2 />Delete selected</Button>}
             </div>
-            <div className="min-h-0 flex-1 overflow-auto">
+            <div className="scroll-y min-h-0 flex-1">
               <div className={cn('grid gap-x-4 border-b px-4 py-2 text-xs text-muted-foreground', cols)}><span /><span>Name</span><span>Size</span><span>Status</span><span>Progress</span><span /></div>
               {downloads.map((d, i) => {
                 const p = pct(d)
                 const indet = d.status === 'downloading' && d.size === 0 // total unknown yet (§2)
                 return (
                   <div key={d.id} onClick={() => setActive(d.id)} style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
-                    className={cn('group grid cursor-pointer items-center gap-x-4 border-b px-4 py-2.5 text-sm transition-colors animate-in fade-in slide-in-from-left-2 fill-mode-backwards hover:bg-accent/50', cols, activeId === d.id && 'bg-accent shadow-[inset_3px_0_0_var(--primary)]')}>
+                    className={cn('group grid cursor-pointer items-center gap-x-4 border-b px-4 py-2.5 text-sm transition-colors animate-in fade-in fill-mode-backwards hover:bg-accent/50', cols, activeId === d.id && 'bg-accent shadow-[inset_3px_0_0_var(--primary)]')}>
                     <Checkbox checked={selected.includes(d.id)} onClick={e => e.stopPropagation()} onCheckedChange={() => toggle(d.id)} aria-label={`Select ${d.name}`} />
                     <div className="min-w-0"><div className="truncate font-medium">{fullName(d)}</div><div className="truncate text-xs text-muted-foreground">{d.source ?? d.url}</div></div>
                     <span className="text-muted-foreground">{d.size ? bytes(d.size) : '—'}</span>

@@ -45,7 +45,7 @@ export default function App() {
           ))}
         </nav>
       </header>
-      <main key={loc.pathname} className="min-h-0 flex-1 animate-in fade-in slide-in-from-bottom-1 duration-300">
+      <main key={loc.pathname} className="min-h-0 flex-1 overflow-hidden animate-in fade-in duration-200">
         {ready ? <Outlet /> : null}
       </main>
     </div>

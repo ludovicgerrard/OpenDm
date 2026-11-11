@@ -56,10 +56,11 @@ export default function NewDownload() {
   const analyzing = p?.status === 'parsing'
 
   return (
-    <div className="mx-auto h-full max-w-3xl space-y-6 overflow-auto p-6" onKeyDown={e => {
+    <div className="scroll-y h-full" onKeyDown={e => {
       if (e.key === 'Escape') cancel()
       if (e.key === 'Enter' && ready && (e.target as HTMLElement).tagName !== 'BUTTON') void start()
     }}>
+      <div className="mx-auto max-w-3xl space-y-6 p-6">
       <div><h1 className="text-xl font-semibold">New download</h1>
         <p className="text-sm text-muted-foreground">The download won&apos;t start until you press Download.</p></div>
 
@@ -79,7 +80,7 @@ export default function NewDownload() {
       {p?.status === 'error' && <Button variant="outline" onClick={cancel}><ArrowLeft />Back</Button>}
 
       {p?.status === 'ready' && (
-        <div className="animate-in fade-in slide-in-from-bottom-3 space-y-6 duration-500">
+        <div className="animate-in fade-in space-y-6 duration-300">
           <div className="flex gap-4 rounded-lg border bg-card p-4">
             <div className="grid h-20 w-32 shrink-0 place-items-center overflow-hidden rounded-md bg-secondary text-muted-foreground">
               {p.kind === 'ytdlp' && p.thumbnail && imgOk
@@ -98,7 +99,7 @@ export default function NewDownload() {
             <div className="grid gap-2" role="radiogroup">
               {(p.rows ?? []).map((x, i) => { const I = kindIcon[x.note === 'audio' ? 'audio' : 'video']; return (
                 <button key={i} role="radio" aria-checked={sel === i} onClick={() => setSel(i)} style={{ animationDelay: `${i * 50}ms` }}
-                  className={cn('flex items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left text-sm transition-all animate-in fade-in slide-in-from-bottom-1 fill-mode-backwards hover:border-primary/50', sel === i && 'border-primary bg-primary/5 ring-2 ring-primary/20')}>
+                  className={cn('flex items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left text-sm transition-all animate-in fade-in fill-mode-backwards hover:border-primary/50', sel === i && 'border-primary bg-primary/5 ring-2 ring-primary/20')}>
                   <I className="size-4 text-muted-foreground" />
                   <span className="flex-1 font-medium">{x.label}</span>
                   {badge(x.note) && <span className={cn('rounded-full px-2 py-0.5 text-xs', x.note === 'best' ? 'bg-primary/10 text-primary' : 'bg-secondary text-muted-foreground')}>{badge(x.note)}</span>}
@@ -126,5 +127,5 @@ export default function NewDownload() {
           <div className="flex justify-end"><Button size="lg" onClick={start} disabled={!name.trim() || busy}>{busy ? <Loader2 className="animate-spin" /> : <Download />}Download</Button></div>
         </div>
       )}
-    </div>)
+      </div></div>)
 }

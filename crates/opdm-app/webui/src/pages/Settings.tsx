@@ -32,7 +32,7 @@ function ToolCard({ t, i, anyBusy }: { t: Tool; i: number; anyBusy: boolean }) {
   const { installTool } = useStore()
   const installing = t.status === 'installing'; const missing = t.status === 'missing'
   return (
-    <div style={{ animationDelay: `${i * 70}ms` }} className="animate-in fade-in slide-in-from-bottom-2 fill-mode-backwards space-y-3 rounded-lg border bg-card p-4 duration-500">
+    <div style={{ animationDelay: `${i * 70}ms` }} className="animate-in fade-in fill-mode-backwards space-y-3 rounded-lg border bg-card p-4 duration-500">
       <div className="flex items-start gap-3">
         <div className={cn('mt-0.5 grid size-9 shrink-0 place-items-center rounded-md transition-colors duration-300', missing ? 'bg-destructive/10 text-destructive' : t.status === 'outdated' ? 'bg-warn/15 text-warn' : t.status === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-ok/15 text-ok')}>
           {installing ? <Loader2 className="size-5 animate-spin" /> : missing ? <PackageX className="size-5" /> : t.status === 'outdated' ? <ArrowUpCircle className="size-5" /> : t.status === 'error' ? <CircleAlert className="size-5" /> : <CheckCircle2 className="size-5" />}
@@ -105,7 +105,7 @@ export default function SettingsPage() {
             {id === 'tools' && missingRequired > 0 && <span className="ml-auto grid size-5 place-items-center rounded-full bg-destructive text-xs text-white">{missingRequired}</span>}
           </button>))}
       </nav>
-      <div className="relative min-h-0 overflow-auto"><div key={tab} className="mx-auto max-w-2xl animate-in fade-in slide-in-from-right-2 space-y-6 p-6 pb-20 duration-300">
+      <div className="scroll-y relative min-h-0"><div key={tab} className="mx-auto max-w-2xl animate-in fade-in space-y-6 p-6 pb-20 duration-200">
         {tab === 'tools' && <>
           <div><h1 className="text-lg font-semibold">Tools</h1>
             <p className="text-sm text-muted-foreground">Needed for YouTube and other video sites. Plain HTTP and HLS downloads work without them.</p></div>
@@ -198,11 +198,11 @@ export default function SettingsPage() {
       </div>
         {/* save bar: save_settings needs all five values, validated, on explicit Save (§7.3) */}
         <div className={cn('pointer-events-none sticky bottom-0 flex justify-end p-4 transition-all', dirty && 'pointer-events-auto')}>
-          {dirty && <div className="flex items-center gap-3 rounded-lg border bg-card p-3 pl-4 text-sm shadow-lg animate-in fade-in slide-in-from-bottom-2">
+          {dirty && <div className="flex items-center gap-3 rounded-lg border bg-card p-3 pl-4 text-sm shadow-lg animate-in fade-in">
             <span className={cn(!valid && 'text-destructive')}>{!valid ? 'Fix: port 1024–65535, segments 1–16, folder required.' : 'Unsaved changes'}</span>
             <Button size="sm" disabled={!valid} onClick={() => void save()}>Save</Button>
           </div>}
-          {note && <div className="absolute bottom-full right-4 mb-2 rounded-lg border bg-card px-4 py-2 text-sm shadow-lg animate-in fade-in slide-in-from-bottom-2">{note}</div>}
+          {note && <div className="absolute bottom-full right-4 mb-2 rounded-lg border bg-card px-4 py-2 text-sm shadow-lg animate-in fade-in">{note}</div>}
         </div>
       </div>
     </div>)

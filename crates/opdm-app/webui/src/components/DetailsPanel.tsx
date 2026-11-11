@@ -34,7 +34,7 @@ export function DetailsPanel() {
   }
   const doRemove = (deleteFiles: boolean) => { setConfirmDel(false); void remove([d.id], deleteFiles) }
   return (
-    <div key={d.id} className="flex h-full animate-in fade-in flex-col gap-3 overflow-auto p-4 duration-300">
+    <div key={d.id} className="scroll-y flex h-full animate-in fade-in flex-col gap-3 p-4 duration-200">
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="min-w-0 flex-1 truncate text-base font-semibold">{fullName(d)}</h2>
         <StatusBadge status={d.status} />
