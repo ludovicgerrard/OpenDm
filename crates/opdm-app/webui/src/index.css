@@ -1,0 +1,47 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/schibsted-grotesk";
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* paper / ink / ultramarine — "download ledger" feel */
+  --background: oklch(0.975 0.006 250); --foreground: oklch(0.22 0.04 265);
+  --card: oklch(0.995 0.003 250); --card-foreground: var(--foreground);
+  --popover: var(--card); --popover-foreground: var(--foreground);
+  --primary: oklch(0.45 0.2 266); --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.945 0.012 255); --secondary-foreground: var(--foreground);
+  --muted: oklch(0.945 0.012 255); --muted-foreground: oklch(0.5 0.03 262);
+  --accent: oklch(0.93 0.03 262); --accent-foreground: var(--foreground);
+  --destructive: oklch(0.58 0.22 25); --border: oklch(0.9 0.012 255); --input: var(--border); --ring: var(--primary);
+  --ok: oklch(0.62 0.15 160); --warn: oklch(0.75 0.15 75); --radius: 0.625rem;
+}
+.dark {
+  --background: oklch(0.17 0.03 265); --foreground: oklch(0.95 0.01 255);
+  --card: oklch(0.21 0.035 265); --card-foreground: var(--foreground); --popover: var(--card); --popover-foreground: var(--foreground);
+  --primary: oklch(0.7 0.16 266); --primary-foreground: oklch(0.15 0.03 265);
+  --secondary: oklch(0.26 0.035 265); --secondary-foreground: var(--foreground);
+  --muted: oklch(0.26 0.035 265); --muted-foreground: oklch(0.7 0.03 260);
+  --accent: oklch(0.3 0.05 265); --accent-foreground: var(--foreground);
+  --destructive: oklch(0.65 0.2 25); --border: oklch(0.3 0.035 265); --input: var(--border); --ring: var(--primary);
+}
+@theme inline {
+  --font-sans: "Schibsted Grotesk Variable", system-ui, sans-serif;
+  --color-background: var(--background); --color-foreground: var(--foreground);
+  --color-card: var(--card); --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover); --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary); --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary); --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted); --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent); --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive); --color-border: var(--border); --color-input: var(--input); --color-ring: var(--ring);
+  --color-ok: var(--ok); --color-warn: var(--warn);
+  --radius-lg: var(--radius); --radius-md: calc(var(--radius) - 2px); --radius-sm: calc(var(--radius) - 4px);
+}
+html, body, #root { height: 100%; overflow: hidden; }
+/* every scroll area: no horizontal scrollbar, reserved gutter so content never shifts when the bar appears */
+.scroll-y { overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+@layer base { * { @apply border-border outline-ring/50; } body { @apply bg-background text-foreground font-sans antialiased; font-variant-numeric: tabular-nums; } }
+@keyframes stripe { to { background-position: 1rem 0 } }
+.bar-live { background-image: linear-gradient(45deg, rgb(255 255 255/.25) 25%, transparent 25% 50%, rgb(255 255 255/.25) 50% 75%, transparent 75%); background-size: 1rem 1rem; animation: stripe .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
