@@ -9,6 +9,24 @@ use tauri::{Emitter, Manager};
 
 fn main() {
     tauri::Builder::default()
+        // single instance (must be the first plugin): launching OpenDM.exe a
+        // second time just focuses the running app — a duplicate process could
+        // not bind the WS port anyway and would break the extension link
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
+        // close (X) hides the window into the tray — the engine keeps running;
+        // the only real quit is the tray menu's Exit (see the tray setup below)
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             cfg::init();
             diag::init(&cfg::app_dir());
@@ -99,6 +117,41 @@ fn main() {
                 }
             }).ok();
 
+            // ---- tray: OpenDM stays alive after the window is closed ----
+            // X = hide to tray (on_window_event above); the tray menu's Exit is
+            // the only real quit. Left-click on the icon reopens the window.
+            use tauri::menu::{Menu, MenuItem};
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+            let open_item = MenuItem::with_id(app, "opdm-open", "Open OpenDM", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "opdm-exit", "Exit", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+            TrayIconBuilder::new()
+                .icon(tauri::include_image!("icons/icon.ico"))
+                .tooltip("OpenDM — downloads run in the background")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| {
+                    if event.id() == "opdm-exit" {
+                        app.exit(0);
+                    } else if event.id() == "opdm-open" {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.unminimize();
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        if let Some(w) = tray.app_handle().get_webview_window("main") {
+                            let _ = w.unminimize();
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -107,8 +160,17 @@ fn main() {
             yt_status, yt_install_tool, set_ytdlp_channel, yt_log,
             parse_state, parse_clear, parse_confirm
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            // tray mode: "all windows closed" must not terminate the process —
+            // only the tray menu's Exit (app.exit → code Some) may quit
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
 
 /* ---------------- helpers ---------------- */
@@ -190,8 +252,11 @@ fn remove_job(id: String, del_files: bool) {
 
 /// Full detail of one job, incl. per-segment progress for the details panel
 /// (dlman-style segment visualization).
-#[tauri::command]
-fn job_details(id: String) -> Option<Value> {
+///
+/// The body runs on the blocking pool: sync Tauri commands execute on the MAIN
+/// thread, and the HLS branch stats every planned segment file on disk —
+/// polled every 600 ms while a job is selected, that would stall the event loop.
+fn job_details_impl(id: String) -> Option<Value> {
     let jc = dlm::engine().find(&id)?;
     let meta = &jc.meta;
     let speed = f64::from_bits(jc.speed_bits());
@@ -248,6 +313,11 @@ fn job_details(id: String) -> Option<Value> {
 }
 
 #[tauri::command]
+async fn job_details(id: String) -> Option<Value> {
+    tauri::async_runtime::spawn_blocking(move || job_details_impl(id)).await.ok().flatten()
+}
+
+#[tauri::command]
 fn open_folder(id: Option<String>) -> Result<(), String> {
     let p = id
         .and_then(|i| dlm::engine().find(&i))
@@ -294,12 +364,22 @@ fn save_settings(port: u16, max_segments: usize, download_dir: String, user_agen
 /* ---------------- YouTube pipeline commands ---------------- */
 
 /// Status of the managed tools (yt-dlp / Deno / FFmpeg+FFprobe) + channel.
+///
+/// Runs on the blocking pool, NOT the main thread: Tauri executes NON-async
+/// commands on the main thread, and the first call after a fresh launch probes
+/// all four binaries (spawn + bounded wait). On the main thread that stalled
+/// the webview event loop right after boot — the app "froze for a few seconds
+/// after the list appeared" and only recovered once the probes finished.
 #[tauri::command]
-fn yt_status() -> Value {
-    json!({
-        "tools": ytdlp::all_tool_status(),
-        "channel": cfg::settings().ytdlp_channel,
+async fn yt_status() -> Value {
+    tauri::async_runtime::spawn_blocking(|| {
+        json!({
+            "tools": ytdlp::all_tool_status(),
+            "channel": cfg::settings().ytdlp_channel,
+        })
     })
+    .await
+    .unwrap_or_else(|_| json!({ "tools": [], "channel": "stable" }))
 }
 
 /// Install or update a managed tool. Progress rides the `tool-update` event.

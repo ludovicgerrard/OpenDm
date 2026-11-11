@@ -174,11 +174,59 @@ fn spawn_cmd(program: &Path, args: &[impl AsRef<std::ffi::OsStr>]) -> Command {
     c
 }
 
-/// Run `<tool> --version` and return the trimmed first output line.
-fn verify_executable(path: &Path, args: &[&str]) -> Result<String, String> {
-    let out = spawn_cmd(path, args).output().map_err(|e| format!("spawn: {e}"))?;
-    let txt = String::from_utf8_lossy(&out.stdout);
-    let err = String::from_utf8_lossy(&out.stderr);
+/// Why a `--version` probe failed.
+enum ProbeFailure {
+    /// The time cap elapsed — a slowness artifact (cold PyInstaller start +
+    /// Defender scan), NOT proof of a broken binary. Measured: `yt-dlp
+    /// --version` takes ~4.2 s cold / ~0.2 s warm. Callers may retry.
+    Timeout,
+    Other(String),
+}
+
+impl std::fmt::Display for ProbeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProbeFailure::Timeout => write!(f, "timeout after 15 s (cold start?)"),
+            ProbeFailure::Other(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// Run `<tool> --version` with a bounded wait and return the trimmed first output line.
+/// A hung binary must never stall the caller (boot once froze on the unbounded
+/// `.output()` wait) — but the cap must be generous enough for a legitimate cold
+/// start, and a timeout must not be reported as "broken" (see ProbeFailure::Timeout).
+fn verify_executable(path: &Path, args: &[&str]) -> Result<String, ProbeFailure> {
+    let mut child = spawn_cmd(path, args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| ProbeFailure::Other(format!("spawn: {e}")))?;
+    // bounded wait: 300 × 50 ms = 15 s. `--version` output is tiny (<1 KB), so
+    // the unread pipes cannot fill and deadlock the child while we poll.
+    let mut status = None;
+    for _ in 0..300 {
+        match child.try_wait() {
+            Ok(s) if s.is_some() => { status = s; break; }
+            Ok(_) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => { let _ = child.kill(); return Err(ProbeFailure::Other(format!("wait: {e}"))); }
+        }
+    }
+    let status = match status {
+        Some(s) => s,
+        None => {
+            // kill without draining: the result is Err regardless, and if some
+            // grandchild inherited the pipe handles, a drain here could block
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ProbeFailure::Timeout);
+        }
+    };
+    // drain the pipes after a natural exit — at EOF the read terminates
+    let mut txt = String::new();
+    let mut err = String::new();
+    if let Some(mut s) = child.stdout.take() { let _ = s.read_to_string(&mut txt); }
+    if let Some(mut s) = child.stderr.take() { let _ = s.read_to_string(&mut err); }
     let line = txt
         .lines()
         .find(|l| !l.trim().is_empty())
@@ -186,15 +234,20 @@ fn verify_executable(path: &Path, args: &[&str]) -> Result<String, String> {
         .unwrap_or("")
         .trim()
         .to_string();
-    if out.status.success() && !line.is_empty() {
+    if status.success() && !line.is_empty() {
         Ok(line)
+    } else if line.is_empty() {
+        Err(ProbeFailure::Other(format!("exit {status}")))
     } else {
-        Err(if line.is_empty() { format!("exit {}", out.status) } else { line })
+        Err(ProbeFailure::Other(line))
     }
 }
 
-pub fn tool_status(tool: &str) -> ToolStatus {
+/// Status of one managed tool. Returns `(status, probe_timed_out)` — a timeout
+/// means "too slow right now", not "broken" (see ProbeFailure).
+pub fn tool_status(tool: &str) -> (ToolStatus, bool) {
     let path = tool_path(tool);
+    let t0 = Instant::now(); // diagnostics: probe cost per tool (debug builds only)
     let args: &[&str] = match tool {
         T_YTDLP | T_DENO => &["--version"],
         _ => &["-version"],
@@ -211,16 +264,55 @@ pub fn tool_status(tool: &str) -> ToolStatus {
     };
     if path.is_file() {
         match verify_executable(&path, args) {
-            Ok(v) => describe(true, true, v),
-            Err(_) => describe(true, false, String::new()),
+            Ok(v) => {
+                crate::diag::info(&format!("tool-status {tool}: ok in {:?} version={v}", t0.elapsed()));
+                (describe(true, true, v), false)
+            }
+            Err(e) => {
+                crate::diag::info(&format!("tool-status {tool}: FAIL in {:?} error={e}", t0.elapsed()));
+                (describe(true, false, String::new()), matches!(e, ProbeFailure::Timeout))
+            }
         }
     } else {
-        describe(false, false, String::new())
+        crate::diag::info(&format!("tool-status {tool}: missing at {}", path.display()));
+        (describe(false, false, String::new()), false)
     }
 }
 
+/* Tool status is probed by running each managed binary with --version (bounded
+   to 15 s each, see verify_executable). The four probes run in parallel and the
+   result is cached for the app's lifetime: repeated callers (boot, the Settings
+   tab, refreshes after installs) get an instant answer instead of re-spawning
+   the binaries. Install/update flows invalidate the cache. A probe that merely
+   hit the time cap is NOT cached — the next yt_status retries, so a transient
+   cold-start slowness never pins a false "not runnable" for the whole session. */
+static TOOL_CACHE: Mutex<Option<Vec<ToolStatus>>> = Mutex::new(None);
+
 pub fn all_tool_status() -> Vec<ToolStatus> {
-    TOOLS.iter().map(|t| tool_status(t)).collect()
+    if let Some(v) = TOOL_CACHE.lock().unwrap().as_ref() {
+        return v.clone();
+    }
+    let handles: Vec<_> = TOOLS.iter().map(|t| {
+        let t = *t;
+        std::thread::Builder::new().name(format!("tool-status-{t}")).spawn(move || tool_status(t))
+    }).collect();
+    let mut list: Vec<ToolStatus> = Vec::new();
+    let mut settled = true;
+    for jh in handles.into_iter().flatten() {
+        if let Ok((st, timed_out)) = jh.join() {
+            if timed_out { settled = false; }
+            list.push(st);
+        }
+    }
+    if settled {
+        *TOOL_CACHE.lock().unwrap() = Some(list.clone());
+    }
+    list
+}
+
+/// Forget the cached tool status — call when an install/update starts or ends.
+pub fn invalidate_tool_cache() {
+    *TOOL_CACHE.lock().unwrap() = None;
 }
 
 /// Stream `url` → `to`, reporting `(percent|-1, downloaded, total)` to the
@@ -390,6 +482,7 @@ fn deno_from_zip(zip: &Path) -> Result<PathBuf, String> {
 
 /// Install runs in a thread so the UI stays responsive; progress rides `tool-update`.
 pub fn install_async(tool: &str, operation: &str) {
+    invalidate_tool_cache(); // the status changes while installing
     let tool = tool.to_string();
     let operation = operation.to_string();
     std::thread::Builder::new()
@@ -398,6 +491,7 @@ pub fn install_async(tool: &str, operation: &str) {
             if let Err(e) = install_tool(&tool, &operation) {
                 emit_tool_progress(&tool, &operation, "error", None, Some(e));
             }
+            invalidate_tool_cache(); // re-probe on the next yt_status
         })
         .ok();
 }

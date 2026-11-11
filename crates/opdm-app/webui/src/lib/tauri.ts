@@ -2,7 +2,7 @@
 // falls back to mocks. The Tauri branch calls the REAL backend contract —
 // add_download / list_jobs / parse_confirm / parse_state etc. — see
 // docs/MIGRATE_TO_NEW_FRONTEND.md (it supersedes the command names in the other docs).
-import type { Download, Plugin, Settings, Tool } from '@/types'
+import type { Channel, Download, Plugin, Settings, Tool } from '@/types'
 import { DEFAULT_SETTINGS } from '@/lib/defaults'
 import {
   mapJob, mapSettings, mapTool, rowFmt,
@@ -57,20 +57,20 @@ export const api = {
     try { const { getVersion } = await import('@tauri-apps/api/app'); return await getVersion() } catch { return '' }
   },
 
-  /** One boot fetch: list_jobs + get_settings + yt_status + parse_state in parallel (§2). */
-  getState: async (): Promise<{ downloads: Download[]; settings: Settings; tools: Tool[]; channel: string; parse: ParsePayload | null }> => {
-    if (!isTauri) return { downloads: [], settings: DEFAULT_SETTINGS, tools: MOCK_TOOLS, channel: 'stable', parse: null }
-    const [jobs, s, yt, ps] = await Promise.all([
+  /** One boot fetch: list_jobs + get_settings + parse_state in parallel (§2).
+   *  Deliberately WITHOUT yt_status — probing the managed tools spawns
+   *  executables (bounded, cached, parallel) and must never delay `ready`. */
+  getState: async (): Promise<{ downloads: Download[]; settings: Settings; channel: Channel; parse: ParsePayload | null }> => {
+    if (!isTauri) return { downloads: [], settings: DEFAULT_SETTINGS, channel: 'stable', parse: null }
+    const [jobs, s, ps] = await Promise.all([
       invoke0<RawJob[]>('list_jobs'),
       invoke0<RawSettings>('get_settings'),
-      invoke0<{ tools: RawToolStatus[]; channel: string }>('yt_status'),
       invoke0<{ seq: number; payload: ParsePayload | null }>('parse_state'),
     ])
     return {
       downloads: jobs.map(j => mapJob(j)),
       settings: mapSettings(s),
-      tools: mapTool(yt.tools),
-      channel: yt.channel,
+      channel: (s.ytdlp_channel || 'stable') as Channel,
       parse: ps.payload,
     }
   },

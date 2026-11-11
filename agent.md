@@ -55,8 +55,8 @@ README.md, TODO.md          user docs / backend-addition backlog
 
 Core dependencies: `serde/serde_json`, `url`, `sha1`+`base64` (WS handshake),
 `ureq 2.10` (tls+gzip — all HTTP), `dirs 6`, `aes`+`cbc` (HLS AES-128),
-`zip 2` (deflate — tool archives). App: `tauri 2` with the **devtools** feature
-(F12 opens the WebView2 console in the shipped app — keep it). Host: `serde_json`,
+`zip 2` (deflate — tool archives). App: `tauri 2` (`tray-icon` + `image-ico`; **no `devtools` feature on purpose** —
+production must have no debug surface, debug builds get devtools automatically). Host: `serde_json`,
 `sha1`, `base64`.
 
 Frontend stack: React 19 + TypeScript, Vite 8, Tailwind CSS 4 (+ tw-animate-css,
@@ -80,13 +80,25 @@ extension/            load-unpacked in the browser (see §7)
 OpenDM.json           settings (schema §5.4)
 jobs.json             full job list incl. segment positions + cookies (schema §5.5)
 ui-state.json         leftover from the old UI, harmless, unused
-tools/                yt-dlp.exe, deno/, ffmpeg.exe, ffprobe.exe (managed installs)
-logs/engine.log(.1)   diagnostic trail
+tools/                yt-dlp.exe, deno.exe, ffmpeg.exe, ffprobe.exe (managed installs,
+                      single exes — `tool_path` expects exactly that layout)
+logs/engine.log(.1)   diagnostic trail — **debug builds only**; a release exe
+                      writes nothing here (existing files are stale leftovers)
 tmp/                  in-flight parts (also parts_dir() beside HLS meta.json)
 ```
 
 Windows registry (already registered, points at the deployed JSON):
 `HKCU\Software\{Google\Chrome|BraveSoftware\Brave-Browser|Microsoft\Edge}\NativeMessagingHosts\app.opendm.host`.
+
+**Tray behavior** (since the close-to-tray change): the window X button hides the
+window — the engine, downloads and the WS server keep running. The tray icon
+(`icons/icon.ico`) has a menu (**Open OpenDM** / **Exit**); left-click reopens the
+window. The only real quit is the tray menu's Exit (`app.exit(0)`); any other
+`ExitRequested` (all-windows-closed) is prevented in the run-event handler.
+
+**Single instance**: `tauri-plugin-single-instance` is registered as the **first**
+plugin — a second `OpenDM.exe` launch exits instantly and just shows/focuses the
+running window (also works when hidden in the tray).
 
 ---
 
@@ -146,14 +158,20 @@ Nothing ever auto-downloads; the UI Download button calls `parse_confirm`.
 |---|---|---|
 | `add_download` | `url, referer?, filename?` | fills the **parse slot** (never queues); returns `"parse"` |
 | `list_jobs` | – | array of `{id,url,name,folder,state,done,total,speed,error,kind,stage}` |
-| `job_details` | `id` | `Option<Value>`: list row + `referer`, `cookiesSent`, `segs:[{idx,frac,done}]` (range only), `hls:{total,done}` (hls only, counted from `seg{i}.part` files) |
+| `job_details` | `id` | `Option<Value>`: list row + `referer`, `cookiesSent`, `segs:[{idx,frac,done}]` (range only), `hls:{total,done}` (hls only, counted from `seg{i}.part` files). **async** — body runs on the blocking pool (`job_details_impl`) |
 | `pause_job` / `resume_job` / `stop_job` | `id` | – |
 | `remove_job` | `id, delFiles` | – |
 | `open_folder` | `id: Option<String>` | no id → the download dir |
 | `open_file` | `id` | may fail for yt-dlp jobs (no ext yet) |
 | `get_settings` | – | `{port, max_segments, download_dir, user_agent, integrate_takeover, ytdlp_channel}` — **snake_case** |
 | `save_settings` | `port, maxSegments, downloadDir, userAgent, integrateTakeover` — **all 5 required**, no partial update | port ignored when `0`; segments clamped 1–16; create_dir_all |
-| `yt_status` | – | `{tools:[{tool,installed,runnable,version,path,source,is_managed,can_update}], channel}` |
+| `yt_status` | – | `{tools:[{tool,installed,runnable,version,path,source,is_managed,can_update}], channel}` — **async** (blocking pool; the probes spawn binaries); **parallel + cached** (`TOOL_CACHE`, invalidated by `invalidate_tool_cache()` on install start/end); each probe (`verify_executable`) is bounded to **15 s** and a **timeout is never cached** (`ProbeFailure::Timeout`) — the next `yt_status` retries, so cold-start slowness can't pin a false "not runnable". Measured cold starts: yt-dlp ~4 s (native path), ~10 s worst case — never call the unbounded `.output()` pattern again |
+
+**⚠️ Sync commands run on the MAIN thread.** Tauri executes non-async commands on the
+main thread — anything that spawns processes, waits, or does disk I/O there stalls
+the whole webview event loop (the UI freezes while the renderer still paints).
+Heavy commands must be `async fn` + `tauri::async_runtime::spawn_blocking` (see
+`yt_status`, `job_details`). Keep it in mind when adding commands.
 | `yt_install_tool` | `tool, operation: "install"|"update"` | async; progress rides `tool-update` |
 | `set_ytdlp_channel` | `channel` | stable\|nightly\|master, else Err |
 | `parse_state` | – | `{seq, payload: ParsePayload\|null}` |
@@ -283,8 +301,15 @@ still allow missing-origin local clients.
   into ffmpeg], `detailSegments`, `rowFmt`, `fullName`). `lib/tauri.ts` = the
   single bridge (mock fallback when `!isTauri`). `store/useStore.ts` = zustand.
 - **Boot order matters**: register the 4 event listeners **first**, then fetch
-  (`Promise.all` of list_jobs/get_settings/yt_status/parse_state). Reverse order
-  loses events. StrictMode-safe (single-flight `booting` promise).
+  (`Promise.all` of list_jobs/get_settings/parse_state — **deliberately without
+  `yt_status`**, which spawns managed binaries; tools are patched in async via
+  `api.tools()` after `ready`). Reverse order loses events. StrictMode-safe
+  (single-flight `booting` promise). While `!ready`, `App.tsx` renders a
+  fade+pulse `BootSkeleton` (mimics the Home rows; **no `slide-in-from-*`**).
+- **Idle-poll skip**: `refreshJobs` keeps the raw `list_jobs` JSON and returns
+  early when it is unchanged (`lastJobsJson`) — an all-completed list produces
+  zero re-renders from the 1.5 s poll. Any change (progress byte, state, add,
+  remove) makes the JSON differ and the reconcile runs.
 - **Polling** (all `document.hidden`-gated): 1.5 s `list_jobs` reconcile, 1 s
   `parse_state` catch-up, 600 ms `job_details` for the selected job only. Events
   only patch existing rows; the poll reconciles adds/removes and keeps the log
@@ -349,8 +374,10 @@ mirrors `extension/` → `<dest>/extension` (rm -rf + cp -r); writes
 - `npx tsc --noEmit` + `npm run build` in webui (must be clean)
 - `cargo test -p opdm-core` (10 tests; host-only — the Windows target can't run tests)
 - `cargo check --offline --target x86_64-pc-windows-gnu` (slow first time)
-- deploy, checksums match, launch, F12 console clean, exercise the changed path
-- backend diagnostics: `logs/engine.log` next to the exe
+- deploy, checksums match, launch, exercise the changed path (**F12 is disabled in
+  release builds by design** — console debugging happens in `cargo run` dev builds)
+- backend diagnostics: `logs/engine.log` next to the exe (debug builds only —
+  release writes nothing; run a debug build if you need the trail)
 
 ---
 
@@ -384,7 +411,9 @@ Other facts that look like bugs but aren't (yet): `dl-log` unemitted (§5.2);
 1. Frontend not rebuilt before cargo → stale/blank embedded UI (§9.1).
 2. Missing `capabilities/default.json` → blank page, header only (§9.1).
 3. Deploy while OpenDM.exe runs → "could not replace … is OpenDM.exe still
-   running?" — taskkill first.
+   running?" — taskkill first (`deploy.sh` now does this for both exes; note
+   **OpenDMMsgHost.exe lingers** while a browser keeps the NM pipe open, killing
+   OpenDM.exe alone is not enough).
 4. `save_settings` with missing args fails on the Rust side; partial updates don't
    exist — send all five fields from a validated draft (UI has an explicit Save
    bar, never per-keystroke saves).
@@ -405,7 +434,23 @@ Other facts that look like bugs but aren't (yet): `dl-log` unemitted (§5.2);
     the WS channel without updating `background.js` `onmessage`.
 12. `probeHls` fetches the page's own `.m3u8` with credentials — that's the design
     (quality menu), not a privacy issue; data stays between the site and the user.
-13. Diagnostics live in `logs/engine.log` (Windows side), not stdout — the release
-    exe is `windows_subsystem = "windows"` (no console).
-14. `withGlobalTauri: true` is kept, but the frontend uses the npm
-    `@tauri-apps/api` package — don't switch to `window.__TAURI__`.
+13. Diagnostics live in `logs/engine.log` (Windows side) — **debug builds only**;
+    release builds write nothing (§2). To see the trail, run a debug build
+    (`cargo run -p opdm-app --target x86_64-pc-windows-gnu`) or re-add the log
+    temporarily. Also: release has no F12 devtools (`devtools` feature removed)
+    and `withGlobalTauri` is `false` — don't re-enable them without owner request.
+14. The frontend uses the npm `@tauri-apps/api` package (`withGlobalTauri` is
+    `false` since step 2) — don't switch to `window.__TAURI__`.
+15. **Boot freeze (fixed, don't reintroduce):** `yt_status` spawns the 4 managed
+    binaries for `--version`. Two layers made it freeze the app on fresh launch:
+    (a) boot awaited it, and (b) — the sneaky one — being a **sync command it ran
+    on the main thread**, so even after boot stopped awaiting it, the cold-cache
+    probe (~seconds with Defender) stalled the event loop right after the list
+    appeared. The fix, keep all four: bounded 15 s probes (`verify_executable`),
+    parallel probes + `TOOL_CACHE`, a boot fetch that never awaits tools (§8),
+    and `yt_status`/`job_details` as **async commands** (see §5.1 warning).
+    Corollary: the FIRST cap attempt (3 s) was too tight — yt-dlp is a 17 MB
+    PyInstaller one-file exe whose cold start measured **4.2 s** (and ~10 s from
+    a UNC path), so it got killed mid-start and the Tools page showed
+    "Present but not runnable" for a healthy binary. Timeouts are now never
+    cached, and `tool_status` returns `(ToolStatus, timed_out)`.

@@ -12,6 +12,9 @@ Everything runs on your machine: no accounts, no telemetry, no cloud.
 
 - **Everyday downloads** — links, images, videos from any page (context menu or
   floating button), segmented parallel connections with resume.
+- **Runs in the tray** — closing the window (X) keeps OpenDM alive in the
+  notification-area tray (menu: **Open OpenDM** / **Exit**), so the browser
+  integration and running downloads keep working while the window is hidden.
 - **Video sites** — YouTube watch/shorts/embed pages are parsed by yt-dlp; you pick a
   quality (1080p, audio-only, …) in the app, then download.
 - **Streaming players** (HLS `.m3u8`) — the extension sniffs the manifest, shows an
@@ -46,7 +49,8 @@ Plain HTTP and HLS downloads work without any of them. Tools are installed to
 - **Browser extension: Chrome/Brave/Edge (Manifest V3)** — WebSocket primary +
   native-messaging fallback, media sniffing via `webRequest`, download takeover.
 - **No databases** — portable JSON files (`OpenDM.json`, `jobs.json`) live next to
-  the exe; `logs/engine.log` for diagnostics.
+  the exe; **production builds ship with no debug surface**: no F12/inspect
+  console, and the engine writes no diagnostic log (both exist in dev builds only).
 
 ## Build (Windows, from WSL)
 
