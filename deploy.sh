@@ -16,6 +16,13 @@ DEST="${OPENDM_DEST:-/mnt/c/Users/ludov/OpenDM}"
 REL="target/x86_64-pc-windows-gnu/release"
 FILES=(OpenDM.exe OpenDMMsgHost.exe WebView2Loader.dll)
 
+# Windows locks running executables — stop the app AND the native-messaging
+# host (it lingers while a browser keeps its pipe open). Best-effort: with
+# --no-build on a fresh box neither may be running.
+/mnt/c/Windows/System32/taskkill.exe /IM OpenDMMsgHost.exe /F >/dev/null 2>&1 || true
+/mnt/c/Windows/System32/taskkill.exe /IM OpenDM.exe /F >/dev/null 2>&1 || true
+sleep 1
+
 if [[ "${1:-}" != "--no-build" ]]; then
   # Plain cargo build embeds webui/dist at compile time (tauri.conf.json has no
   # devUrl, so even a dev-profile-style build loads the embedded assets — the

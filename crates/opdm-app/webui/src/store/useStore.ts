@@ -74,6 +74,7 @@ interface S {
 let booting: Promise<void> | null = null // StrictMode / hot-reload guard (§4.4)
 let intervalsStarted = false
 const hydratedLogs = new Set<string>() // yt_log hydrate-once per job
+let lastJobsJson = '' // raw list identity — idle polls skip the reconcile entirely
 
 export const useStore = create<S>()(persist((set, get) => ({
   ready: false,
@@ -97,13 +98,15 @@ export const useStore = create<S>()(persist((set, get) => ({
       const st = await api.getState()
       set(s => ({
         downloads: st.downloads,
-        tools: st.tools,
-        channel: (st.channel || 'stable') as Channel,
+        channel: st.channel,
         // real settings win; theme/language stay UI-only (persisted locally)
         settings: { ...st.settings, theme: s.settings.theme, language: s.settings.language },
         parse: st.parse ? { seq: st.parse.seq ?? s.parse.seq + 1, payload: st.parse } : s.parse,
         ready: true,
       }))
+      // tools are probed out-of-band (§2): the probe spawns managed binaries and
+      // must never delay first paint — patch them in whenever the answer lands
+      void api.tools().then(tools => set({ tools })).catch(() => {})
 
       if (isTauri) {
         if (!intervalsStarted) {
@@ -150,6 +153,9 @@ export const useStore = create<S>()(persist((set, get) => ({
   refreshJobs: async () => {
     if (!isTauri) return // browser preview is driven by the mock ticker
     const jobs = await api.list()
+    const raw = JSON.stringify(jobs)
+    if (raw === lastJobsJson) return // idle list (e.g. all completed) → no reconcile, no re-render
+    lastJobsJson = raw
     set(s => {
       const prev = new Map(s.downloads.map(d => [d.id, d]))
       const next = jobs.map(j => mapJob(j, prev.get(j.id)))

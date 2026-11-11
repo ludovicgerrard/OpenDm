@@ -34,6 +34,9 @@ fn stamp() -> String {
 }
 
 pub fn init(app_dir: &Path) {
+    // Production builds have no debug surface: the diagnostic trail
+    // (logs/engine.log) is written by debug builds only.
+    if !cfg!(debug_assertions) { return; }
     let dir = app_dir.join("logs");
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("engine.log");
@@ -48,6 +51,8 @@ pub fn init(app_dir: &Path) {
 }
 
 pub fn line(level: &str, msg: &str) {
+    // no-op in production (see init) — never write a debug trail in release builds
+    if !cfg!(debug_assertions) { return; }
     let entry = format!("{} [{level}] {msg}", stamp());
     match LOG.get() {
         Some(g) => {

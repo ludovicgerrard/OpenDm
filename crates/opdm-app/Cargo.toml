@@ -11,8 +11,12 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# "devtools" → F12 opens the WebView2 console in the shipped app (debug aid)
-tauri = { version = "2", features = ["devtools"] }
+# "tray-icon" + "image-ico" → close-to-tray (icons/icon.ico is the tray icon)
+# NOTE: no "devtools" feature on purpose — production builds must have no debug
+# surface (F12/inspect). Debug builds get devtools automatically.
+tauri = { version = "2", features = ["tray-icon", "image-ico"] }
+# single-instance: launching OpenDM.exe again focuses the running app
+tauri-plugin-single-instance = "2"
 serde_json = "1"
 url = "2"
 opdm-core = { path = "../opdm-core" }

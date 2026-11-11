@@ -7,6 +7,27 @@ import { cn } from '@/lib/utils'
 
 const nav = [{ to: '/', label: 'Home' }, { to: '/new', label: 'New' }, { to: '/settings', label: 'Settings' }]
 
+// Boot skeleton: mimics the Home list rows (fade-in container + pulsing bars).
+// RULE: fade/pulse only — never `slide-in-from-*` inside a scroll container (§8 flicker).
+const SKEL_COLS = 'grid-cols-[2rem_minmax(0,2fr)_6rem_9rem_minmax(8rem,1fr)_2.5rem]'
+function BootSkeleton() {
+  return (
+    <div className="scroll-y h-full animate-in fade-in duration-200" aria-busy="true">
+      <div className="h-11 border-b bg-card" />
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className={cn('grid items-center gap-x-4 border-b px-4 py-2.5 animate-pulse', SKEL_COLS)}>
+          <div className="size-4 rounded border" />
+          <div className="min-w-0 space-y-1.5"><div className="h-3.5 w-2/3 rounded bg-muted" /><div className="h-2.5 w-1/2 rounded bg-muted" /></div>
+          <div className="h-3 w-12 rounded bg-muted" />
+          <div className="h-5 w-16 rounded-full bg-muted" />
+          <div className="h-2 w-full rounded bg-muted" />
+          <div className="size-7 rounded bg-muted" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function App() {
   const boot = useStore(s => s.boot); const ready = useStore(s => s.ready)
   // sticky parse slot: a newer payload (extension click, paste) lands on /new (§5)
@@ -46,7 +67,7 @@ export default function App() {
         </nav>
       </header>
       <main key={loc.pathname} className="min-h-0 flex-1 overflow-hidden animate-in fade-in duration-200">
-        {ready ? <Outlet /> : null}
+        {ready ? <Outlet /> : <BootSkeleton />}
       </main>
     </div>
   )
