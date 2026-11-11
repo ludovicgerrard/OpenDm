@@ -9,3 +9,4 @@ ext_key.txt
 node_modules/
 crates/opdm-app/webui/dist/
 crates/opdm-app/gen/
+deploy.sh

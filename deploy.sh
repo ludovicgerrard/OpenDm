@@ -37,10 +37,17 @@ for f in "${FILES[@]}"; do
   fi
 done
 
-# Native-messaging manifest for the browser extension (created if missing;
-# never overwritten — rotate the extension id there when you rotate keys).
-if [[ ! -f "$DEST/OpenDMMsgHost.json" ]]; then
-  EXT_ID="$(tr -d '[:space:]' < ext_id.txt 2>/dev/null || true)"
+# Browser extension → $DEST/extension (mirrored: stale files don't linger).
+if [[ -d extension ]]; then
+  rm -rf "$DEST/extension"
+  cp -r extension "$DEST/extension"
+fi
+
+# Native-messaging manifest for the browser extension: created if missing,
+# refreshed when the id in ext_id.txt changes (key rotation → update ext_id.txt
+# and redeploy; the file is only rewritten when the id actually differs).
+EXT_ID="$(tr -d '[:space:]' < ext_id.txt 2>/dev/null || true)"
+if [[ ! -f "$DEST/OpenDMMsgHost.json" ]] || ! grep -q "chrome-extension://${EXT_ID}/" "$DEST/OpenDMMsgHost.json" 2>/dev/null; then
   cat > "$DEST/OpenDMMsgHost.json" <<EOF
 {
   "name": "app.opendm.host",
@@ -50,7 +57,7 @@ if [[ ! -f "$DEST/OpenDMMsgHost.json" ]]; then
   "allowed_origins": ["chrome-extension://${EXT_ID}/"]
 }
 EOF
-  echo "created $DEST/OpenDMMsgHost.json (extension id: ${EXT_ID:-?})"
+  echo "wrote $DEST/OpenDMMsgHost.json (extension id: ${EXT_ID:-?})"
 fi
 
 echo "deployed to $DEST:"
