@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'" />
+  <title>OpenDM</title>
+  <link rel="stylesheet" href="ui.css" />
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2Zm-1 4h2v8.2l2.6-2.6L17 13l-5 5-5-5 1.4-1.4L11 14.2V6Z" fill="currentColor"/></svg>
+      <span>OpenDM</span>
+    </div>
+    <input id="urlbox" type="text" placeholder="Paste a download link (http, https, ftp)…" spellcheck="false" />
+    <button id="btn-add" class="primary" title="Add download">Add download</button>
+    <div class="spacer"></div>
+    <button id="btn-folder" title="Open downloads folder">Open folder</button>
+    <button id="btn-settings" title="Options">Options</button>
+  </header>
+
+  <main>
+    <table class="jobs">
+      <thead>
+        <tr><th>File</th><th>Size</th><th>Progress</th><th>Status</th><th>Speed</th><th class="ops"></th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" class="empty">
+      <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-1 4h2v5.2l1.9-1.9L16 11l-4 4-4-4 1.1-.7 1.9 1.9V7Z" /></svg>
+      <p>No downloads yet. Paste a link above<br/>or use the browser extension to capture pages.</p>
+    </div>
+  </main>
+
+  <footer class="status">
+    <span id="counters">0 active · 0 done</span>
+    <span class="sep"></span>
+    <span id="folder">—</span>
+  </footer>
+
+  <!-- Add dialog -->
+  <div class="overlay hidden" id="dlg-add">
+    <div class="dialog">
+      <h3>Add download</h3>
+      <label>URL<input id="add-url" type="text" spellcheck="false" /></label>
+      <div class="row">
+        <label>Folder<input id="add-folder" type="text" spellcheck="false" placeholder="(default)" /></label>
+        <label>Filename<input id="add-name" type="text" spellcheck="false" placeholder="(automatic)" /></label>
+      </div>
+      <div class="dialog-foot">
+        <button id="add-cancel">Cancel</button>
+        <button id="add-ok" class="primary">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Options dialog -->
+  <div class="overlay hidden" id="dlg-settings">
+    <div class="dialog">
+      <h3>Options</h3>
+      <label>Downloads folder<input id="set-folder" type="text" spellcheck="false" /></label>
+      <div class="row">
+        <label>Browser port<input id="set-port" type="number" min="1" max="65535" /></label>
+        <label>Max segments<input id="set-segs" type="number" min="1" max="16" /></label>
+      </div>
+      <label>User agent<input id="set-ua" type="text" spellcheck="false" /></label>
+      <label class="check"><input id="set-takeover" type="checkbox" /> Let the browser extension take over downloads</label>
+      <div class="dialog-foot">
+        <button id="set-cancel">Cancel</button>
+        <button id="set-ok" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script defer src="ui.js"></script>
+</body>
+</html>

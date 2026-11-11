@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/opdm-core",
+    "crates/opdm-app",
+    "crates/opdm-host",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+
+[profile.release]
+opt-level = 2
+strip = true
+lto = false
