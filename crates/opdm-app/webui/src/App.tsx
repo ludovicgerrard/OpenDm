@@ -30,24 +30,25 @@ function BootSkeleton() {
 
 export default function App() {
   const boot = useStore(s => s.boot); const ready = useStore(s => s.ready)
-  // sticky parse slot: a newer payload (extension click, paste) lands on /new (§5)
-  const parseSeq = useStore(s => s.parse.seq); const hasPayload = useStore(s => !!s.parse.payload)
+  // batch cards: an incoming payload that CREATES a card (extension send) lands
+  // on /new — probe updates never create cards, so nothing yanks mid-review (§8)
+  const batchAdded = useStore(s => s.batchAdded)
   const [url, setUrl] = useState(''); const navigate = useNavigate(); const loc = useLocation()
-  const seenParse = useRef(0)
+  const seenBatch = useRef(0)
   useEffect(() => { void boot() }, [boot])
   useEffect(() => {
-    if (hasPayload && parseSeq > seenParse.current) { seenParse.current = parseSeq; navigate('/new') }
-  }, [parseSeq, hasPayload, navigate])
+    if (batchAdded > seenBatch.current) { seenBatch.current = batchAdded; navigate('/new') }
+  }, [batchAdded, navigate])
   const theme = useStore(s => s.settings.theme)
   useEffect(() => {
     const mq = matchMedia('(prefers-color-scheme: dark)')
     const apply = () => document.documentElement.classList.toggle('dark', theme === 'dark' || (theme === 'auto' && mq.matches))
     apply(); mq.addEventListener('change', apply); return () => mq.removeEventListener('change', apply)
   }, [theme])
-  // header paste box: analyze then navigate — the page shows parsing/ready as events arrive (§5)
+  // header paste box: multi-links land in the batch, then navigate (§5)
   const submit = (e: React.FormEvent) => {
     e.preventDefault(); const u = url.trim(); if (!u) return
-    setUrl(''); void useStore.getState().analyze(u); navigate('/new')
+    setUrl(''); useStore.getState().addLinks(u); navigate('/new')
   }
   return (
     <div className="flex h-screen flex-col">

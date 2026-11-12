@@ -17,6 +17,12 @@ Everything runs on your machine: no accounts, no telemetry, no cloud.
   integration and running downloads keep working while the window is hidden.
 - **Video sites** — YouTube watch/shorts/embed pages are parsed by yt-dlp; you pick a
   quality (1080p, audio-only, …) in the app, then download.
+- **Batch links** — the New page holds a card per link (paste several at once, or
+  send them from the extension); each shows its quality, name and estimated size
+  in Details, and "Download all" starts every analyzed card.
+- **Auto download** — one toggle (New page / Settings → Downloads): 5 s after a
+  link is analyzed it downloads by itself at 1080p, or the closest lower quality
+  (never audio-only). YouTube always waits for the quality list first.
 - **Streaming players** (HLS `.m3u8`) — the extension sniffs the manifest, shows an
   IDM-style quality menu, and OpenDM downloads + merges the segments.
 - **Browser download takeover** — when the browser starts a download, the extension

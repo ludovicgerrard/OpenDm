@@ -345,11 +345,14 @@ fn get_settings() -> Value {
         "user_agent": s.user_agent,
         "integrate_takeover": s.integrate_takeover,
         "ytdlp_channel": s.ytdlp_channel,
+        "auto_download": s.auto_download,
     })
 }
 
+// `auto_download` is an Option so the New page can persist just the checkbox
+// without resending the whole settings draft (the other 5 args are required).
 #[tauri::command(rename_all = "camelCase")]
-fn save_settings(port: u16, max_segments: usize, download_dir: String, user_agent: String, integrate_takeover: bool) {
+fn save_settings(port: u16, max_segments: usize, download_dir: String, user_agent: String, integrate_takeover: bool, auto_download: Option<bool>) {
     let dir = PathBuf::from(download_dir);
     let _ = std::fs::create_dir_all(&dir);
     cfg::update(|s| {
@@ -358,6 +361,7 @@ fn save_settings(port: u16, max_segments: usize, download_dir: String, user_agen
         s.download_dir = dir;
         s.user_agent = user_agent;
         s.integrate_takeover = integrate_takeover;
+        if let Some(v) = auto_download { s.auto_download = v; }
     });
 }
 

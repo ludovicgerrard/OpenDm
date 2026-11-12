@@ -62,7 +62,9 @@ function ToolCard({ t, i, anyBusy }: { t: Tool; i: number; anyBusy: boolean }) {
 const vars = ['title', 'id', 'uploader', 'upload_date', 'resolution', 'ext']
 const sample: Record<string, string> = { title: 'Rust in 100 Seconds', id: 'abc123', uploader: 'Fireship', upload_date: '20260102', resolution: '1080p', ext: 'mp4' }
 
-const pickFive = (s: Settings) => ({ capturePort: s.capturePort, maxSegments: s.maxSegments, downloadDir: s.downloadDir, userAgent: s.userAgent, integrateTakeover: s.integrateTakeover })
+// Snapshot of everything save_settings persists (§7.3): the Save bar compares
+// these to decide "unsaved changes". autoDownload rides along (batch feature).
+const pickSaved = (s: Settings) => ({ capturePort: s.capturePort, maxSegments: s.maxSegments, downloadDir: s.downloadDir, userAgent: s.userAgent, integrateTakeover: s.integrateTakeover, autoDownload: s.autoDownload })
 
 export default function SettingsPage() {
   const { settings: s, setSettings, tools, setChannel, saveSettings, channel } = useStore()
@@ -74,22 +76,22 @@ export default function SettingsPage() {
   const anyBusy = tools.some(t => t.status === 'installing')
   const num = (k: 'maxSegments' | 'maxConcurrent' | 'fragmentThreads' | 'speedLimitKb', min = 1, max?: number) =>
     <Input type="number" min={min} max={max} className="w-24" value={s[k]} onChange={e => set({ [k]: Number(e.target.value) } as Partial<Settings>)} />
-  const tog = (k: 'autoStart' | 'sponsorBlock' | 'notifyInApp' | 'notifySystem' | 'restoreQueue' | 'embedSubs' | 'embedThumb' | 'embedMeta' | 'embedChapters' | 'integrateTakeover') =>
+  const tog = (k: 'autoDownload' | 'sponsorBlock' | 'notifyInApp' | 'notifySystem' | 'restoreQueue' | 'embedSubs' | 'embedThumb' | 'embedMeta' | 'embedChapters' | 'integrateTakeover') =>
     <Switch checked={s[k]} onCheckedChange={v => set({ [k]: v } as Partial<Settings>)} />
   const togglePlugin = async (p: Plugin) => { setPBusy(p.id); try { p.installed ? await api.removePlugin(p.id) : await api.installPlugin(p.id); setPlugins(l => l.map(x => x.id === p.id ? { ...x, installed: !x.installed } : x)) } finally { setPBusy(null) } }
   const preview = s.filenameTemplate.replace(/%\((\w+)\)s/g, (_, k) => sample[k] ?? k)
 
   // ---- save draft (§7.3): explicit Save; never per keystroke ----
-  const [savedVals, setSavedVals] = useState(() => pickFive(useStore.getState().settings))
+  const [savedVals, setSavedVals] = useState(() => pickSaved(useStore.getState().settings))
   const [savedPort, setSavedPort] = useState(() => useStore.getState().settings.capturePort)
   const [note, setNote] = useState('')
-  const five = pickFive(s)
+  const five = pickSaved(s)
   const dirty = JSON.stringify(five) !== JSON.stringify(savedVals)
   const valid = s.capturePort >= 1024 && s.capturePort <= 65535 && s.maxSegments >= 1 && s.maxSegments <= 16 && s.downloadDir.trim().length > 0
   const save = async () => {
     if (!valid) return
     await saveSettings()
-    const post = pickFive(useStore.getState().settings)
+    const post = pickSaved(useStore.getState().settings)
     setSavedVals(post); setSavedPort(post.capturePort)
     setNote(post.capturePort !== savedPort ? 'Restart OpenDM to apply the new port, then reconfigure the extension.' : 'Saved.')
     setTimeout(() => setNote(''), 6000)
@@ -139,7 +141,7 @@ export default function SettingsPage() {
             {CAP.maxConcurrent && <Row label="Simultaneous downloads">{num('maxConcurrent')}</Row>}
             {CAP.fragmentThreads && <Row label="Fragment threads" hint="Parallel fragments per download (yt-dlp)">{num('fragmentThreads')}</Row>}
             {CAP.speedLimit && <Row label="Speed limit (KB/s)" hint="0 means unlimited">{num('speedLimitKb', 0)}</Row>}
-            {CAP.autoStart && <Row label="Start immediately after analysis">{tog('autoStart')}</Row>}
+            <Row label="Auto download" hint="Starts 5 seconds after a link is analyzed. YouTube waits for the quality list and picks 1080p, or the closest lower.">{tog('autoDownload')}</Row>
             {CAP.filenameTemplate && <Row label="Skip sponsored segments" hint="SponsorBlock">{tog('sponsorBlock')}</Row>}
           </Group>
           {CAP.filenameTemplate && <Group title="File name template">

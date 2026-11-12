@@ -38,6 +38,7 @@ export type RawToolStatus = {
 export type RawSettings = {
   port: number; max_segments: number; download_dir: string
   user_agent: string; integrate_takeover: boolean; ytdlp_channel: string
+  auto_download: boolean // New page / Settings toggle (batch feature)
 }
 
 /** Parse-slot payload. Every entry point (extension, paste box, New button)
@@ -74,10 +75,10 @@ export type ToolEvent = {
 /* ---------- mappers ---------- */
 
 const STATUS: Record<RawJob['state'], Status> = { 1: 'queued', 2: 'downloading', 3: 'paused', 4: 'completed', 5: 'failed' }
-const host = (u: string) => { try { return new URL(u).hostname } catch { return u } }
+export const host = (u: string) => { try { return new URL(u).hostname } catch { return u } }
 
 /** name/ext split: yt-dlp jobs have no extension until the merge finishes. */
-export function mapJob(j: RawJob | RawDetail, prev?: Download): Download {
+export function mapJob(j: RawJob | RawDetail, prev?: Download, bootIndex?: number): Download {
   const status = j.state === 2 && j.stage === 'merging' ? 'merging' : STATUS[j.state]
   const dot = j.name.lastIndexOf('.')
   const hasExt = j.kind !== 'ytdlp' && dot > 0 && j.name.length - dot <= 6
@@ -90,7 +91,11 @@ export function mapJob(j: RawJob | RawDetail, prev?: Download): Download {
     segments: prev?.segments ?? [], logs: [],
     referer: 'referer' in j ? j.referer : undefined,
     cookiesSent: 'cookiesSent' in j ? j.cookiesSent : undefined,
-    quality: prev?.quality, createdAt: prev?.createdAt ?? Date.now(),
+    quality: prev?.quality,
+    // createdAt is the newest-first sort key (§8). bootIndex = "added k seconds
+    // before boot" (the backend list is insertion-ordered, oldest first) — keeps
+    // restart order stable AND stays a plausible timestamp for the Details panel.
+    createdAt: prev?.createdAt ?? (bootIndex !== undefined ? Date.now() - bootIndex : Date.now()),
   }
 }
 
@@ -98,7 +103,7 @@ export function mapSettings(s: RawSettings, ui?: { theme?: Settings['theme']; la
   return {
     ...DEFAULT_SETTINGS,
     downloadDir: s.download_dir, maxSegments: s.max_segments, userAgent: s.user_agent,
-    capturePort: s.port, integrateTakeover: s.integrate_takeover,
+    capturePort: s.port, integrateTakeover: s.integrate_takeover, autoDownload: s.auto_download,
     theme: ui?.theme ?? DEFAULT_SETTINGS.theme, language: ui?.language ?? DEFAULT_SETTINGS.language,
   }
 }

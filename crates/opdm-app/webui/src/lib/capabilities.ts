@@ -1,7 +1,9 @@
 // Capability flags: unsupported controls render only `if (CAP.x)`. When a backend
 // addition ships (docs/MIGRATE_TO_NEW_FRONTEND.md §10), flip the flag and wire the
 // call in lib/tauri.ts — do not delete the UI code.
-// restoreQueue / autoStart / cli are extra flags beyond the doc's list, same idea.
+// restoreQueue / cli are extra flags beyond the doc's list, same idea.
+// (autoDownload is NOT gated: it is a real backend setting since the batch
+// feature — cfg.rs auto_download, toggled on the New page and in Settings.)
 export const CAP = {
   retry: false,            // B2: retry_job
   saveToFolder: false,     // B1: parse_confirm folder argument
@@ -21,6 +23,5 @@ export const CAP = {
   appUpdate: false,        // updater plugin
   extensionFolder: false,  // B8/§10: bundled extension resources
   restoreQueue: false,     // B5: re-enqueue unfinished jobs at launch
-  autoStart: false,        // B5: start_download → paused
   cli: false,              // tauri-plugin-cli
 }

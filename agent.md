@@ -163,8 +163,8 @@ Nothing ever auto-downloads; the UI Download button calls `parse_confirm`.
 | `remove_job` | `id, delFiles` | – |
 | `open_folder` | `id: Option<String>` | no id → the download dir |
 | `open_file` | `id` | may fail for yt-dlp jobs (no ext yet) |
-| `get_settings` | – | `{port, max_segments, download_dir, user_agent, integrate_takeover, ytdlp_channel}` — **snake_case** |
-| `save_settings` | `port, maxSegments, downloadDir, userAgent, integrateTakeover` — **all 5 required**, no partial update | port ignored when `0`; segments clamped 1–16; create_dir_all |
+| `get_settings` | – | `{port, max_segments, download_dir, user_agent, integrate_takeover, ytdlp_channel, auto_download}` — **snake_case** |
+| `save_settings` | `port, maxSegments, downloadDir, userAgent, integrateTakeover, autoDownload` — **all 6 required** (`autoDownload` is `Option<bool>` on the Rust side, so the New page can persist just the flag with the same 5 mandatory values) | port ignored when `0`; segments clamped 1–16; create_dir_all |
 | `yt_status` | – | `{tools:[{tool,installed,runnable,version,path,source,is_managed,can_update}], channel}` — **async** (blocking pool; the probes spawn binaries); **parallel + cached** (`TOOL_CACHE`, invalidated by `invalidate_tool_cache()` on install start/end); each probe (`verify_executable`) is bounded to **15 s** and a **timeout is never cached** (`ProbeFailure::Timeout`) — the next `yt_status` retries, so cold-start slowness can't pin a false "not runnable". Measured cold starts: yt-dlp ~4 s (native path), ~10 s worst case — never call the unbounded `.output()` pattern again |
 
 **⚠️ Sync commands run on the MAIN thread.** Tauri executes non-async commands on the
@@ -202,6 +202,23 @@ Heavy commands must be `async fn` + `tauri::async_runtime::spawn_blocking` (see
              "note":"best"|"muxed"|"video"|"audio","v":"137","a":"140"} ], // v/a optional
   "error": "" }
 ```
+
+**`payload.url` is the card identity** (batch feature): every ytdlp variant
+(`parsing` / `ready` / `error`) stamps the url **as the user gave it** — never
+the normalized form and never yt-dlp's canonical output. `yt_parse` used to
+leave the `parsing`/`error` payload's `url` empty and set `ready` to the
+normalized `-J` result, so the New page's url-matched routing spawned a phantom
+"Analyzing" card for every YouTube send (plus a second one when the canonical
+url differed, e.g. `youtu.be/…` or extension page urls with playlist params).
+`normalize_watch_url` stays internal (it only shapes the `-J` call);
+`parse_confirm` queues whatever url the payload carries — yt-dlp resolves any
+form. **Queue-time guard:** `queue_ytdlp` re-normalizes the url before creating
+the job and `download_args` adds `--no-playlist`, so a Mix/Radio context
+(`list=RD-…` / `start_radio=1`) can never reach yt-dlp and make it expand the
+whole endless autoplay playlist (that died on Windows with
+`OSError: [Errno 22] Invalid argument`). `routeParse` also falls back to
+`videoId` matching for the same video
+re-sent in a different url shape, and ignores payloads with an empty `url`.
 
 `fmt` sent back by `parse_confirm` (`rowFmt` in the adapter): `best → ""`,
 `audio → a`, `video → "v+bestaudio"` (or `"v+a"`), `muxed → v`. `""` = yt-dlp default.
@@ -293,19 +310,67 @@ still allow missing-origin local clients.
 ## 8. Frontend (`crates/opdm-app/webui`)
 
 - **Structure**: `main.tsx` (createHashRouter — safe on the custom protocol),
-  `App.tsx` (boot + parse-seq watcher → `/new` + header paste box), pages
+  `App.tsx` (boot + `batchAdded` watcher → `/new` + header paste box → `addLinks`),
+  pages
   `Home` (list + `DetailsPanel` in resizable panels), `NewDownload`
-  (**view of the parse slot**), `Settings` (tools/general/downloads/network/
+  (**batch list** — one card per link, cards mirror the parse slot via
+  `routeParse`, see below), `Settings` (tools/general/downloads/network/
   browser/about; output+plugins hidden). `lib/backend.ts` = raw contract types +
   mappers (`mapJob`, `mapSettings`, `mapTool` [4 tools → 3 cards, ffprobe merged
-  into ffmpeg], `detailSegments`, `rowFmt`, `fullName`). `lib/tauri.ts` = the
+  into ffmpeg], `detailSegments`, `rowFmt`, `fullName`, `host`). `lib/tauri.ts` = the
   single bridge (mock fallback when `!isTauri`). `store/useStore.ts` = zustand.
+- **New page = batch list (STEP2)**: cards live in `store.batch`
+  (`BatchItem`: status waiting/parsing/ready/starting/started/error, `info`
+  payload snapshot, `name`, `fmt` = selected row INDEX as string, `deadline`).
+  - `addLinks(text)` splits on spaces/commas/newlines, dedupes, appends waiting
+    cards, then `pump()`.
+  - While analyzing, a card is already populated: the thumbnail is derived from
+    the YouTube video id (`i.ytimg.com/vi/<id>/mqdefault.jpg`, onError → icon)
+    and the title falls back to the url — the real title/thumbnail arrive with
+    the payload and take over.
+  - `pump()` = sequential analysis through the **single sticky parse slot**: no-op
+    while any card is `parsing`/`starting`; otherwise the OLDEST waiting card
+    goes `parsing` (FIFO queue — display is newest-first, see below) →`add_download`. Results arrive via `parse-state` events and the
+    1 s poll → `applyParse` → `routeParse` **matches payloads by `payload.url`**:
+    no card → create one (extension sends; boot passes `{navigate:false}` so a
+    leftover slot never yanks); parsing card → fresh ready (countdown starts if
+    auto is on); ready card → **probe merge keeps `fmt` + deadline** (classic
+    links emit a second payload when the HEAD probe lands; user-edited names are
+    kept via `nameDirty`); error card → revives on a late success.
+  - Auto-download countdowns are **deadline-based** (`Date.now()+5000` on the
+    card, never tick counts) so they stay correct while the window is hidden;
+    a module-level `setInterval(tickBatch, 200)` fires due deadlines into
+    `startItem` and watchdogs cards stuck `parsing` > 90 s (slot replaced by an
+    extension send — a late success still revives them). Per-card countdown UI
+    re-renders on a 100 ms local tick; card edits (`fmt`/`name`) cancel ONLY
+    that card (`deadline: null`); `removeItem` of a parsing card cancels the
+    parse and guards the url in `recentlyRemoved` (15 s) so its late payload
+    can't resurrect the card.
+  - Auto quality = `lib/autoFormat.ts` `pickAutoRow`: **1080p or the closest
+    lower, never audio-only** (row labels look like `1080p — video only…`;
+    regex `(\d{3,4})p|x(\d{3,4})\b`; fallback first video row, then best row).
+  - `setAuto(v)` persists ONLY the flag (`getRawSettings()` → `saveSettings`
+    with `autoDownload: v`, never the dirty Settings draft) and starts/stops
+    countdowns on ready cards. The same setting is a Settings → Downloads row
+    (draft path, included in the save-snapshot `pickSaved`).
+  - Details collapse animates `grid-rows-[0fr]`→`[1fr]` + `min-h-0
+    overflow-hidden` (never slide-in inside `.scroll-y`). Save-to is read-only
+    until backend addition B1 (`CAP.saveToFolder`).
 - **Boot order matters**: register the 4 event listeners **first**, then fetch
   (`Promise.all` of list_jobs/get_settings/parse_state — **deliberately without
   `yt_status`**, which spawns managed binaries; tools are patched in async via
   `api.tools()` after `ready`). Reverse order loses events. StrictMode-safe
   (single-flight `booting` promise). While `!ready`, `App.tsx` renders a
   fade+pulse `BootSkeleton` (mimics the Home rows; **no `slide-in-from-*`**).
+- **Newest-first lists (§8)**: Home rows and batch cards display newest-**added**
+  first. Downloads sort by `createdAt` (`refreshJobs` reconcile + boot); the
+  backend `list_jobs` is insertion-ordered (oldest first), so boot seeds
+  `createdAt` 1 s apart via `mapJob`'s `bootIndex` (keeps restart order stable
+  and the Details "Added" timestamp plausible). Rows never reshuffle on
+  progress events — only a NEW download takes the top. Batch cards are
+  **prepended** (`addLinks` reverses a multi-paste so the last link lands
+  topmost; `routeParse` prepends extension cards), while the analysis queue
+  itself stays FIFO — `pump` scans the newest-first array from the END.
 - **Idle-poll skip**: `refreshJobs` keeps the raw `list_jobs` JSON and returns
   early when it is unchanged (`lastJobsJson`) — an all-completed list produces
   zero re-renders from the 1.5 s poll. Any change (progress byte, state, add,
@@ -323,7 +388,9 @@ still allow missing-origin local clients.
   controls are hidden, **never deleted** — each maps to a backend addition
   (`retry`→B2, `saveToFolder`→B1, `pickFolder`→B4, the B5 settings set,
   `toolRemove/toolCustomPath/toolLatestCheck`→B6, `appUpdate`, `extensionFolder`,
-  `plugins`, `cli`, `restoreQueue`, `autoStart`). Full table in `TODO.md`.
+  `plugins`, `cli`, `restoreQueue`). `autoDownload` is NOT gated — it is a real
+  backend setting since the batch feature (`cfg.rs auto_download`, New page +
+  Settings → Downloads). Full table in `TODO.md`.
 - **Animation rules** (regression guard — scrollbar flicker fix):
   - `html,body,#root { height:100%; overflow:hidden }`; scroll areas use
     `.scroll-y` (`overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable`).
@@ -334,7 +401,9 @@ still allow missing-origin local clients.
     Settings About code box.
   - New page scrolls full-window-width (`.scroll-y` outer, centered column inner).
 - Vite dev server: port **1420** strictPort; in a plain browser everything uses
-  mocks (no backend needed).
+  mocks (no backend needed). The mock payload deliberately carries 2160p/1440p
+  rows above 1080p so `pickAutoRow` (auto quality = 1080p or closest lower) is
+  visibly exercised in preview.
 
 ---
 

@@ -1,131 +1,194 @@
-import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Loader2, Search, Video, Music, FileIcon, Download, FolderOpen, ArrowLeft } from 'lucide-react'
+// New page as a batch list (STEP2_BATCH_DOWNLOADS.md): every link is a card —
+// thumbnail, status, per-card auto-download countdown, Details with the quality
+// / name / folder / size controls. Analysis runs sequentially through the single
+// sticky parse slot (store `pump`); cards match payloads by url (`routeParse`).
+// RULE: fade-only animations inside a `.scroll-y` page — the Details collapse
+// animates grid-template-rows 0fr→1fr, never slide-in-from-* (§8 flicker).
+import { useEffect, useState } from 'react'
+import {
+  Link2, Search, Video, Music, FileIcon, Download, Clock, Check,
+  TriangleAlert, Loader2, ChevronDown, X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { api } from '@/lib/tauri'
-import { useStore } from '@/store/useStore'
-import { rowFmt, type ParseRow } from '@/lib/backend'
+import { Switch } from '@/components/ui/switch'
+import { useStore, type BatchItem } from '@/store/useStore'
+import { AUTO_MS, AUTO_SECONDS } from '@/lib/autoFormat'
 import { bytes, duration } from '@/lib/format'
-import { CAP } from '@/lib/capabilities'
+import { host } from '@/lib/backend'
 import { cn } from '@/lib/utils'
 
 const kindIcon = { video: Video, audio: Music, file: FileIcon }
-const badge = (note?: ParseRow['note']) =>
-  note === 'best' ? 'Recommended' : note === 'video' ? 'Merge' : ''
 
-export default function NewDownload() {
-  const navigate = useNavigate()
-  const parse = useStore(s => s.parse)
-  const settings = useStore(s => s.settings)
-  const [url, setUrl] = useState('')
-  const [name, setName] = useState(''); const [sel, setSel] = useState(0)
-  const [busy, setBusy] = useState(false)
-  const [imgOk, setImgOk] = useState(true)
-  const touchedName = useRef(false)
-  const p = parse.payload
+/** YouTube thumbnail straight from the video id — a card looks populated while
+ *  yt-dlp is still analyzing; the ready payload may bring a better one. */
+const ytThumb = (url: string): string | undefined => {
+  const m = /(?:youtube\.com\/(?:watch\?[^#\s]*v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/.exec(url)
+  return m ? `https://i.ytimg.com/vi/${m[1]}/mqdefault.jpg` : undefined
+}
 
-  // a new URL resets name/selection; probe updates keep a name the user edited (§5)
-  const urlKey = p?.url ?? ''
-  useEffect(() => { touchedName.current = false; setSel(0); setImgOk(true) }, [urlKey])
+/** Re-renders while this card counts down (reference `Lf`): 100 ms local tick,
+ *  the DEADLINE itself lives on the card so hidden windows still start on time. */
+function useNow(active: boolean) {
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    if (!touchedName.current && p?.filename) setName(p.kind === 'ytdlp' ? p.filename : p.filename)
-  }, [parse.seq, urlKey]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!active) return
+    const t = setInterval(() => setNow(Date.now()), 100)
+    return () => clearInterval(t)
+  }, [active])
+  return now
+}
 
-  const analyze = () => { const u = url.trim(); if (!u) return; setUrl(''); void useStore.getState().analyze(u) }
-  const cancel = () => { void useStore.getState().cancelParse(); navigate('/') }
-
-  const ready = p?.status === 'ready'
-  const selectedRow = p?.kind === 'ytdlp' ? p.rows?.[sel] : undefined
-  const size = p?.kind === 'ytdlp' ? selectedRow?.size : p?.probe?.totalBytes
-  const start = async () => {
-    if (!p || p.status !== 'ready' || busy) return
-    setBusy(true)
-    try {
-      await useStore.getState().startDownload({
-        url: p.url, kind: p.kind, filename: name.trim(), dir,
-        fmt: p.kind === 'ytdlp' ? rowFmt(selectedRow) : '',
-        referer: p.referer, cookies: p.cookies,
-      })
-      navigate('/')
-    } catch (e) { console.error(e) } finally { setBusy(false) }
-  }
-  const [dir, setDir] = useState('') // used once backend addition B1 lands (CAP.saveToFolder)
-  useEffect(() => { setDir(p?.folder || settings.downloadDir) }, [urlKey]) // eslint-disable-line react-hooks/exhaustive-deps
-  const analyzing = p?.status === 'parsing'
+function BatchCard({ it }: { it: BatchItem }) {
+  const patchItem = useStore(s => s.patchItem)
+  const removeItem = useStore(s => s.removeItem)
+  const startItem = useStore(s => s.startItem)
+  const deadline = it.deadline
+  const counting = deadline !== null
+  const now = useNow(counting)
+  const left = deadline !== null ? Math.max(0, deadline - now) : 0
+  const info = it.info
+  const rows = info?.kind === 'ytdlp' ? (info.rows ?? []) : []
+  const selRow = info?.kind === 'ytdlp' ? rows[Number(it.fmt) || 0] : undefined
+  const size = info?.kind === 'ytdlp' ? selRow?.size : info?.probe?.totalBytes
+  const ready = it.status === 'ready'
+  // thumbnail: payload's own, else derived from the video id (works while analyzing)
+  const thumb = (info?.kind === 'ytdlp' && info.thumbnail) || ytThumb(info?.url ?? it.url) || undefined
+  const [imgOk, setImgOk] = useState(true)
+  useEffect(() => setImgOk(true), [thumb]) // a new source may load fine again
+  // title: user-edited name → payload title/filename → the url (never blank, even mid-analysis)
+  const label = it.name || info?.title || info?.filename || it.url
+  // any edit cancels ONLY this card's countdown (§ per-card countdowns)
+  const edit = (p: Partial<BatchItem>) => patchItem(it.id, { ...p, deadline: null })
+  const meta = ready && info ? [
+    info.kind === 'ytdlp' ? info.uploader : (info.probe?.type || host(info.url)),
+    info.kind === 'ytdlp' ? duration(info.duration) : '',
+    selRow?.label ?? '',
+    size ? `${selRow?.approx ? '~' : ''}${bytes(size)}` : '',
+  ].filter(Boolean).join(' · ') : ''
 
   return (
-    <div className="scroll-y h-full" onKeyDown={e => {
-      if (e.key === 'Escape') cancel()
-      if (e.key === 'Enter' && ready && (e.target as HTMLElement).tagName !== 'BUTTON') void start()
-    }}>
-      <div className="mx-auto max-w-3xl space-y-6 p-6">
-      <div><h1 className="text-xl font-semibold">New download</h1>
-        <p className="text-sm text-muted-foreground">The download won&apos;t start until you press Download.</p></div>
-
-      <form onSubmit={e => { e.preventDefault(); analyze() }} className="flex gap-2">
-        <Input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" className="h-10" />
-        <Button type="submit" className="h-10" disabled={busy || analyzing}>{busy ? <Loader2 className="animate-spin" /> : <Search />}Analyze</Button>
-      </form>
-
-      {!p && <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Paste a link above, or send one from the browser extension.</div>}
-
-      {p?.status === 'parsing' && <div className="space-y-3">
-        <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{p.kind === 'ytdlp' ? 'Parsing with yt-dlp…' : 'Fetching file info…'}</p>
-        {[0, 1, 2].map(i => <div key={i} className="h-14 animate-pulse rounded-lg bg-secondary" style={{ animationDelay: `${i * 120}ms` }} />)}
-      </div>}
-
-      {p?.status === 'error' && <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive animate-in fade-in">{p.error || 'Could not analyze this link.'}</div>}
-      {p?.status === 'error' && <Button variant="outline" onClick={cancel}><ArrowLeft />Back</Button>}
-
-      {p?.status === 'ready' && (
-        <div className="animate-in fade-in space-y-6 duration-300">
-          <div className="flex gap-4 rounded-lg border bg-card p-4">
-            <div className="grid h-20 w-32 shrink-0 place-items-center overflow-hidden rounded-md bg-secondary text-muted-foreground">
-              {p.kind === 'ytdlp' && p.thumbnail && imgOk
-                ? <img src={p.thumbnail} alt="" className="h-full w-full object-cover" onError={() => setImgOk(false)} />
-                : <Video />}
-            </div>
-            <div className="min-w-0 text-sm">
-              <p className="truncate font-medium">{p.kind === 'ytdlp' ? (p.title || p.filename) : p.filename}</p>
-              <p className="text-muted-foreground">
-                {p.kind === 'ytdlp' ? [p.uploader, duration(p.duration)].filter(Boolean).join(', ') : [p.probe?.type, p.probe?.disposition].filter(Boolean).join(' · ') || 'Direct link'}
-              </p>
-            </div>
-          </div>
-
-          {p.kind === 'ytdlp' && <div className="space-y-2"><Label>Quality</Label>
-            <div className="grid gap-2" role="radiogroup">
-              {(p.rows ?? []).map((x, i) => { const I = kindIcon[x.note === 'audio' ? 'audio' : 'video']; return (
-                <button key={i} role="radio" aria-checked={sel === i} onClick={() => setSel(i)} style={{ animationDelay: `${i * 50}ms` }}
-                  className={cn('flex items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left text-sm transition-all animate-in fade-in fill-mode-backwards hover:border-primary/50', sel === i && 'border-primary bg-primary/5 ring-2 ring-primary/20')}>
-                  <I className="size-4 text-muted-foreground" />
-                  <span className="flex-1 font-medium">{x.label}</span>
-                  {badge(x.note) && <span className={cn('rounded-full px-2 py-0.5 text-xs', x.note === 'best' ? 'bg-primary/10 text-primary' : 'bg-secondary text-muted-foreground')}>{badge(x.note)}</span>}
-                  <span className="text-muted-foreground">{x.approx ? '~' : ''}{bytes(x.size)}</span>
-                </button>) })}
-            </div>
-          </div>}
-
-          <div className={cn('grid gap-4', !CAP.saveToFolder && 'sm:grid-cols-1')}>
-            <div className="space-y-2"><Label htmlFor="n">File name</Label>
-              <Input id="n" value={name} onChange={e => { touchedName.current = true; setName(e.target.value) }} />
-              {p.kind === 'ytdlp' && <p className="text-xs text-muted-foreground">The container is chosen automatically — no extension needed.</p>}
-            </div>
-            {CAP.saveToFolder && <div className="space-y-2"><Label htmlFor="d">Save to</Label>
-              <div className="flex gap-2"><Input id="d" value={dir} onChange={e => setDir(e.target.value)} />
-                <Button type="button" variant="outline" size="icon" aria-label="Browse" onClick={async () => { const q = await api.pickFolder(); if (q) setDir(q) }}><FolderOpen /></Button>
-              </div></div>}
-          </div>
-
-          <div className="flex items-center justify-between rounded-lg bg-secondary px-4 py-3 text-sm">
-            <span className="text-muted-foreground">Estimated size</span>
-            <span className="font-medium">{selectedRow?.approx ? '~' : ''}{size ? bytes(size) : '—'}</span>
-          </div>
-
-          <div className="flex justify-end"><Button size="lg" onClick={start} disabled={!name.trim() || busy}>{busy ? <Loader2 className="animate-spin" /> : <Download />}Download</Button></div>
+    <div className="animate-in fade-in rounded-lg border bg-card duration-300">
+      <div className="flex items-center gap-3 p-3">
+        <div className="grid aspect-video w-28 shrink-0 place-items-center overflow-hidden rounded-md bg-secondary text-muted-foreground">
+          {thumb && imgOk
+            ? <img src={thumb} alt="" className="size-full object-cover" onError={() => setImgOk(false)} />
+            : <Video className="size-6" />}
         </div>
-      )}
-      </div></div>)
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="truncate font-medium" title={label}>{label}</p>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {it.status === 'waiting' && <><Clock className="size-3.5" />Waiting</>}
+            {it.status === 'parsing' && <><Loader2 className="size-3.5 animate-spin" />Analyzing…</>}
+            {it.status === 'starting' && <><Loader2 className="size-3.5 animate-spin" />Adding…</>}
+            {it.status === 'started' && <span className="flex items-center gap-1.5 text-ok"><Check className="size-3.5" />Added to downloads</span>}
+            {it.status === 'error' && <span className="flex min-w-0 items-center gap-1.5 text-destructive"><TriangleAlert className="size-3.5 shrink-0" /><span className="truncate">{it.error}</span></span>}
+            {ready && meta && <span className="truncate">{meta}</span>}
+          </div>
+          {counting && (
+            <div className="flex items-center gap-2 animate-in fade-in duration-200">
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+                <div className="h-full rounded-full bg-primary transition-[width] duration-100 ease-linear" style={{ width: `${left / AUTO_MS * 100}%` }} />
+              </div>
+              <span className="w-24 text-right text-xs tabular-nums text-muted-foreground">Starting in {Math.ceil(left / 1000)} s</span>
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {counting && <Button size="sm" variant="outline" onClick={() => edit({ deadline: null })}>Cancel</Button>}
+          {ready && !counting && <Button size="sm" onClick={() => void startItem(it.id)} disabled={!it.name.trim()}><Download />Download</Button>}
+          <Button size="sm" variant="outline" disabled={!ready} aria-expanded={it.open} onClick={() => patchItem(it.id, { open: !it.open })}>
+            Details<ChevronDown className={cn('transition-transform duration-300', it.open && 'rotate-180')} />
+          </Button>
+          <Button size="icon" variant="ghost" className="size-8" aria-label="Remove" disabled={it.status === 'starting'} onClick={() => removeItem(it.id)}><X /></Button>
+        </div>
+      </div>
+      <div className={cn('grid transition-[grid-template-rows] duration-300', it.open && ready ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}>
+        <div className="min-h-0 overflow-hidden">
+          {ready && info && (
+            <div className="space-y-5 border-t p-4">
+              {info.kind === 'ytdlp' && <div className="space-y-2">
+                <Label>Quality</Label>
+                <div className="grid gap-2" role="radiogroup">
+                  {rows.map((r, i) => { const I = kindIcon[r.note === 'audio' ? 'audio' : 'video']; return (
+                    <button key={i} role="radio" aria-checked={(Number(it.fmt) || 0) === i} onClick={() => edit({ fmt: String(i) })}
+                      className={cn('flex items-center gap-3 rounded-lg border bg-card px-4 py-2.5 text-left text-sm transition-all hover:border-primary/50', (Number(it.fmt) || 0) === i && 'border-primary bg-primary/5 ring-2 ring-primary/20')}>
+                      <I className="size-4 text-muted-foreground" />
+                      <span className="flex-1 font-medium">{r.label}</span>
+                      <span className="text-muted-foreground">{r.approx ? '~' : ''}{bytes(r.size)}</span>
+                    </button>) })}
+                </div>
+              </div>}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor={`n-${it.id}`}>File name</Label>
+                  <Input id={`n-${it.id}`} value={it.name} onChange={e => patchItem(it.id, { name: e.target.value, nameDirty: true, deadline: null })} />
+                  {info.kind === 'ytdlp' && <p className="text-xs text-muted-foreground">The container is chosen automatically — no extension needed.</p>}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`d-${it.id}`}>Save to</Label>
+                  {/* B1 pending: parse_confirm has no folder argument — read-only until then */}
+                  <Input id={`d-${it.id}`} value={it.dir} readOnly title="All downloads go to the downloads folder (Settings → General)" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-secondary px-4 py-3 text-sm">
+                <span className="text-muted-foreground">Estimated size</span>
+                <span className="font-medium">{selRow?.approx ? '~' : ''}{size ? bytes(size) : '—'}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function NewDownload() {
+  const batch = useStore(s => s.batch)
+  const addLinks = useStore(s => s.addLinks)
+  const clearBatch = useStore(s => s.clearBatch)
+  const startItem = useStore(s => s.startItem)
+  const auto = useStore(s => s.settings.autoDownload)
+  const setAuto = useStore(s => s.setAuto)
+  const [url, setUrl] = useState('')
+  const readyCards = batch.filter(i => i.status === 'ready')
+
+  return (
+    <div className="scroll-y h-full">
+      <div className="mx-auto max-w-3xl space-y-6 p-6">
+        <div>
+          <h1 className="text-xl font-semibold">New downloads</h1>
+          <p className="text-sm text-muted-foreground">Add one or more links. Nothing downloads until you confirm, or until the auto download countdown ends.</p>
+        </div>
+
+        <form onSubmit={e => { e.preventDefault(); const v = url.trim(); if (!v) return; setUrl(''); addLinks(v) }} className="flex gap-2">
+          <Input value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste a link (several links separated by spaces work too)" className="h-10" />
+          <Button type="submit" className="h-10" disabled={!url.trim()}><Search />Analyze</Button>
+        </form>
+
+        <label className="-mt-3 flex w-fit cursor-pointer items-center gap-2 text-sm">
+          <Switch checked={auto} onCheckedChange={v => void setAuto(v === true)} />
+          Auto download <span className="text-muted-foreground">starts {AUTO_SECONDS} s after each analysis</span>
+        </label>
+
+        {batch.length === 0 ? (
+          <div className="grid place-items-center rounded-lg border border-dashed py-14 text-center text-sm text-muted-foreground animate-in fade-in duration-300">
+            <div><Link2 className="mx-auto mb-2 size-8" strokeWidth={1.25} />Your links will appear here</div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">{batch.length} {batch.length === 1 ? 'link' : 'links'}</span>
+              <div className="flex gap-2">
+                {readyCards.length > 1 && <Button size="sm" variant="outline" onClick={() => readyCards.forEach(c => void startItem(c.id))}><Download />Download all ({readyCards.length})</Button>}
+                <Button size="sm" variant="ghost" onClick={clearBatch}>Clear</Button>
+              </div>
+            </div>
+            {batch.map(it => <BatchCard key={it.id} it={it} />)}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }

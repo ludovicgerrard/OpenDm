@@ -42,6 +42,8 @@ const mockParse = (url: string): ParsePayload => {
     folder: DEFAULT_SETTINGS.downloadDir || '~/Downloads', cookies: null, referer: null, probe: null,
     title: 'Sample video title', videoId: 'abc123', duration: 312, uploader: 'Fireship', thumbnail: '',
     rows: [
+      { label: '2160p · mp4 (video only)', size: 812e6, approx: true, note: 'video', v: '313' },
+      { label: '1440p · mp4 (video only)', size: 421e6, approx: true, note: 'video', v: '308' },
       { label: '1080p · mp4', size: 182e6, approx: true, note: 'best', v: '137', a: '140' },
       { label: '1080p · mp4 (video only)', size: 176e6, approx: true, note: 'video', v: '137' },
       { label: 'Audio only · m4a', size: 5e6, approx: false, note: 'audio', a: '140' },
@@ -68,7 +70,9 @@ export const api = {
       invoke0<{ seq: number; payload: ParsePayload | null }>('parse_state'),
     ])
     return {
-      downloads: jobs.map(j => mapJob(j)),
+      // newest-ADDED first (§8): jobs arrive insertion-ordered (oldest first) —
+      // seed createdAt 1 s apart (mapJob bootIndex); App.tsx sorts by it at boot
+      downloads: jobs.map((j, i) => mapJob(j, undefined, jobs.length - i)),
       settings: mapSettings(s),
       channel: (s.ytdlp_channel || 'stable') as Channel,
       parse: ps.payload,
@@ -119,14 +123,15 @@ export const api = {
   /** yt-dlp subprocess log of one job (hydrate the ring buffer once). */
   ytLog: (id: string): Promise<string | null> => (isTauri ? invoke0<string | null>('yt_log', { id }) : Promise.resolve(null)),
 
-  /** save_settings needs ALL five values, no partial update (§7.3). */
+  /** save_settings needs ALL five values, no partial update (§7.3) —
+   *  autoDownload rides along (Option on the Rust side, so it is always sent). */
   saveSettings: (s: Settings) =>
     call<void>('save_settings', {
       port: s.capturePort, maxSegments: s.maxSegments, downloadDir: s.downloadDir,
-      userAgent: s.userAgent, integrateTakeover: s.integrateTakeover,
+      userAgent: s.userAgent, integrateTakeover: s.integrateTakeover, autoDownload: s.autoDownload,
     }, () => {}),
   /** re-read the real settings (reconcile clamps after a save). */
-  getRawSettings: (): Promise<RawSettings> => (isTauri ? invoke0<RawSettings>('get_settings') : Promise.resolve({ port: 9100, max_segments: 8, download_dir: '', user_agent: '', integrate_takeover: true, ytdlp_channel: 'stable' })),
+  getRawSettings: (): Promise<RawSettings> => (isTauri ? invoke0<RawSettings>('get_settings') : Promise.resolve({ port: 9100, max_segments: 8, download_dir: '', user_agent: '', integrate_takeover: true, ytdlp_channel: 'stable', auto_download: false })),
 
   tools: async (): Promise<Tool[]> => {
     if (!isTauri) return MOCK_TOOLS
