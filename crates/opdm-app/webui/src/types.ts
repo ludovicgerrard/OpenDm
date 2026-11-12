@@ -14,9 +14,9 @@ export interface Settings {
   // general
   downloadDir: string; theme: 'auto' | 'light' | 'dark'; language: string; notifyInApp: boolean; notifySystem: boolean; restoreQueue: boolean
   // real backend keys (save_settings / get_settings)
-  maxSegments: number; capturePort: number; integrateTakeover: boolean; userAgent: string
+  maxSegments: number; capturePort: number; integrateTakeover: boolean; userAgent: string; autoDownload: boolean
   // downloads (hidden until backend support — see lib/capabilities.ts)
-  maxConcurrent: number; fragmentThreads: number; speedLimitKb: number; autoStart: boolean; filenameTemplate: string; sponsorBlock: boolean
+  maxConcurrent: number; fragmentThreads: number; speedLimitKb: number; filenameTemplate: string; sponsorBlock: boolean
   // network (hidden until backend support)
   proxy: string; cookieMode: 'none' | 'text' | 'file'; cookieText: string; cookieFile: string
   // output (hidden until backend support)

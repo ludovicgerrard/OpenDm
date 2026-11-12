@@ -577,11 +577,19 @@ pub fn from_send(url: &str, filename: Option<String>, referer: Option<String>, c
 }
 
 fn yt_parse(url: &str, cookies: Option<String>) {
+    // The payload's `url` is the CARD IDENTITY on the New page (routeParse
+    // matches payloads to cards by it): always stamp the url AS THE USER GAVE
+    // IT — never the normalized form and never yt-dlp's canonical output — so
+    // paste cards and later payloads always agree. Normalization stays internal
+    // (it only shapes the `-J` call). Leaving `url` empty here (parse_base's
+    // default) made every YouTube send spawn a phantom "Analyzing" card.
+    let original = url.to_string();
     let url = normalize_watch_url(url);
     {
         let mut v = parse_base();
         v["kind"] = "ytdlp".into();
         v["status"] = "parsing".into();
+        v["url"] = original.clone().into();
         if let Some(c) = &cookies { v["cookies"] = Value::String(c.clone()); }
         parse_state_set(v)
     };
@@ -592,7 +600,7 @@ fn yt_parse(url: &str, cookies: Option<String>) {
                 let mut v = parse_base();
                 v["kind"] = "ytdlp".into();
                 v["status"] = "ready".into();
-                v["url"] = info.url.clone().into();
+                v["url"] = original.clone().into();
                 v["filename"] = info.title.clone().into();
                 v["title"] = info.title.into();
                 v["videoId"] = info.id.clone().into();
@@ -607,6 +615,7 @@ fn yt_parse(url: &str, cookies: Option<String>) {
                 let mut v = parse_base();
                 v["kind"] = "ytdlp".into();
                 v["status"] = "error".into();
+                v["url"] = original.into();
                 v["error"] = e.clone().into();
                 crate::diag::error(&format!("parse: yt-dlp -J failed for {probe_url} → {e}"));
                 v
@@ -779,6 +788,10 @@ pub fn download_args(fmt: &str, name: &str, cookies_file: Option<&Path>, filepat
         .map(|s| s.to_string())
         .collect();
     args.extend(base_tool_args());
+    // one job = one video: never expand a playlist when a video url also carries
+    // playlist context (Mix/Radio autoplay links ride `list=RD-…`).
+    // queue_ytdlp normalizes those params away, this is the belt-and-braces guard.
+    args.push("--no-playlist".into());
     if let Some(f) = cookies_file {
         args.push("--cookies".into());
         args.push(f.to_string_lossy().to_string());

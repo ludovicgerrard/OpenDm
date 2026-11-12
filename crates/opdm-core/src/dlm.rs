@@ -106,7 +106,12 @@ impl Engine {
         let c = cfg::settings();
         let folder = folder.unwrap_or_else(|| c.download_dir.clone());
         if title.trim().is_empty() { title = "YouTube video".into(); }
-        let jc = JobCore::new(url.to_string(), None, cookies, folder, job::sanitize_filename(&title));
+        // Strip playlist context (list=/start_radio=…) from single-video urls.
+        // The payload now carries the url AS SENT (the New page card identity),
+        // and a Mix/Radio context here made yt-dlp expand the whole endless
+        // radio playlist and die with "OSError: [Errno 22]" (§ yt_parse).
+        let url = crate::ytdlp::normalize_watch_url(url);
+        let jc = JobCore::new(url, None, cookies, folder, job::sanitize_filename(&title));
         *jc.kind.lock().unwrap() = "ytdlp".into();
         *jc.fmtsel.lock().unwrap() = fmtsel.to_string();
         *jc.stage.lock().unwrap() = "downloading".into();

@@ -17,6 +17,9 @@ pub struct Settings {
     /// yt-dlp release channel: stable | nightly | master
     #[serde(default = "d_channel")]
     pub ytdlp_channel: String,
+    /// Auto-download analyzed links after a 5 s countdown (New page batch list).
+    #[serde(default)]
+    pub auto_download: bool,
 }
 
 fn d_port() -> u16 { 9100 }
@@ -35,7 +38,7 @@ fn d_dir() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { port: d_port(), max_segments: d_segments(), download_dir: d_dir(), user_agent: d_ua(), integrate_takeover: true, ytdlp_channel: d_channel() }
+        Settings { port: d_port(), max_segments: d_segments(), download_dir: d_dir(), user_agent: d_ua(), integrate_takeover: true, ytdlp_channel: d_channel(), auto_download: false }
     }
 }
 
