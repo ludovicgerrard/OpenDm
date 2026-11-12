@@ -5,6 +5,7 @@
 
 :root {
   /* paper / ink / ultramarine — "download ledger" feel */
+  color-scheme: light; --sb-thumb: oklch(0.78 0.02 260); --sb-thumb-hover: oklch(0.64 0.03 260);
   --background: oklch(0.975 0.006 250); --foreground: oklch(0.22 0.04 265);
   --card: oklch(0.995 0.003 250); --card-foreground: var(--foreground);
   --popover: var(--card); --popover-foreground: var(--foreground);
@@ -16,6 +17,7 @@
   --ok: oklch(0.62 0.15 160); --warn: oklch(0.75 0.15 75); --radius: 0.625rem;
 }
 .dark {
+  color-scheme: dark; --sb-thumb: oklch(0.42 0.04 265); --sb-thumb-hover: oklch(0.54 0.05 265);
   --background: oklch(0.17 0.03 265); --foreground: oklch(0.95 0.01 255);
   --card: oklch(0.21 0.035 265); --card-foreground: var(--foreground); --popover: var(--card); --popover-foreground: var(--foreground);
   --primary: oklch(0.7 0.16 266); --primary-foreground: oklch(0.15 0.03 265);
@@ -39,7 +41,14 @@
 }
 html, body, #root { height: 100%; overflow: hidden; }
 /* every scroll area: no horizontal scrollbar, reserved gutter so content never shifts when the bar appears */
-.scroll-y { overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.scroll-y { overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
+html { background: var(--background); }
+/* themed scrollbars everywhere (follow the .dark class, not the OS theme) */
+* { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); background-clip: content-box; }
 
 @layer base { * { @apply border-border outline-ring/50; } body { @apply bg-background text-foreground font-sans antialiased; font-variant-numeric: tabular-nums; } }
 @keyframes stripe { to { background-position: 1rem 0 } }
