@@ -227,7 +227,34 @@ YouTube detection (`ytdlp::youtube_id`) routes watch/youtu.be/shorts/embed URLs 
 the yt-dlp pipeline; everything else is classic (instant entry + background HEAD
 probe that fills `probe`).
 
+**yt-dlp process-tree kill (§ winjob)**: the official yt-dlp.exe is a PyInstaller
+onefile build — it spawns a SECOND yt-dlp.exe (the extracted worker) that does
+the real work. `child.kill()` on the process we spawned kills only the
+bootloader; the worker survives orphaned and the download keeps running
+(this was the "pause/delete does not stop the download" bug, proven live via
+WebView2 CDP: two PIDs, 8 MB bootloader + 80 MB worker). Fix
+(`crates/opdm-core/src/winjob.rs`): every spawned yt-dlp child (download AND
+`-J` parse) is assigned to a Windows **Job Object** with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; pause/cancel → `TerminateJobObject`
+(bootloader + worker + ffmpeg all die). The kill-on-close also takes every
+tree down when OpenDM itself dies — a force-killed app leaves zero orphans
+(proven: `taskkill /IM OpenDM.exe /F` → yt-dlp gone ≤ 2 s).
+
+**App exit (tray Exit)**: `RunEvent::ExitRequested` with `code: Some` runs
+`Engine::shutdown()` first — pause every running job (their watch loops kill
+the trees via the job object), 600 ms grace, force any straggler into
+ST_PAUSED (QUEUED would auto-start on the next launch!), persist, clear the
+parse slot. The flags stay SET for stragglers: resetting them sends a late
+coordinator into the error branch (success=false → ST_ERROR). Window X only
+hides to tray — downloads intentionally continue there.
+
 ### 5.4 `OpenDM.json` (Settings, serde defaults — old installs stay valid)
+
+`tauri.conf.json` deliberately has NO `version` field: Tauri falls back to the
+crate's Cargo version (`opdm-app` → workspace `Cargo.toml`), so the About page
+(`getVersion()`) and the diag log (`env!("CARGO_PKG_VERSION")`) share ONE
+source of truth. Do not re-add it — that baked a second hardcoded "1.0.0"
+that could drift from the Cargo version on a bump.
 
 `port` (u16, 9100) · `max_segments` (usize, 8) · `download_dir` (OS Downloads,
 OneDrive-aware via `dirs::download_dir()`; auto-migrates away from the old
@@ -319,6 +346,12 @@ still allow missing-origin local clients.
   mappers (`mapJob`, `mapSettings`, `mapTool` [4 tools → 3 cards, ffprobe merged
   into ffmpeg], `detailSegments`, `rowFmt`, `fullName`, `host`). `lib/tauri.ts` = the
   single bridge (mock fallback when `!isTauri`). `store/useStore.ts` = zustand.
+- **Home compact view**: a `Compact` switch (right end of the select-all header
+  line, next to "Delete selected") toggles dense rows — `py-1 text-xs`, url
+  subtitle hidden, folder button `size-7`; the 6-col grid (`cols`) and column
+  header stay shared so rows keep aligning in both modes. Preference lives in
+  the zustand store (`compactHome`) and IS persisted in `opendm-ui` (pure UI
+  pref, top-level key — never inside Rust-owned `settings`, §4.1).
 - **New page = batch list (STEP2)**: cards live in `store.batch`
   (`BatchItem`: status waiting/parsing/ready/starting/started/error, `info`
   payload snapshot, `name`, `fmt` = selected row INDEX as string, `deadline`).
@@ -346,6 +379,14 @@ still allow missing-origin local clients.
     that card (`deadline: null`); `removeItem` of a parsing card cancels the
     parse and guards the url in `recentlyRemoved` (15 s) so its late payload
     can't resurrect the card.
+  - **Cards own their backend job** (`jobId` + `jobState` mirror on the card):
+    `startDownload` returns the `parse_confirm` job id, `startItem` stores it,
+    and `applyJobEvent`/`refreshJobs` keep `jobState` honest (event mirror +
+    1.5 s list reconcile). Started cards get **Pause/Resume** buttons
+    (`pause_job`/`resume_job`) and reflect Downloading/Paused/Completed/Failed;
+    removing a started card (X) or **Clear** stops the real job
+    (`remove_job` + delete partials) — the download does NOT outlive its card.
+    (Was the "delete continues in background" bug: cards were frontend-only.)
   - Auto quality = `lib/autoFormat.ts` `pickAutoRow`: **1080p or the closest
     lower, never audio-only** (row labels look like `1080p — video only…`;
     regex `(\d{3,4})p|x(\d{3,4})\b`; fallback first video row, then best row).
@@ -408,6 +449,22 @@ still allow missing-origin local clients.
 ---
 
 ## 9. Build, deploy, verify
+
+### 9.0 Version discipline (standing rule)
+
+Every modification session bumps the **workspace version** (`[workspace.package]
+version` in `Cargo.toml`) **BEFORE the build**, then documents the change in
+`CHANGELOG.md`:
+
+- PATCH (1.1.**x**) — bug fixes only
+- MINOR (1.**x**.0) — new user-facing features
+- MAJOR — breaking changes (format/protocol/setting incompatibilities)
+
+One bump per deploy (a session's whole batch = one version), never per commit.
+The version flows automatically to the About page (`getVersion` → Cargo
+fallback since `tauri.conf.json` has no `version`), `engine.log`
+(`CARGO_PKG_VERSION`) and the exe's ProductVersion — so after a deploy the
+About page must show the NEW version (verify it like a checksum).
 
 ### 9.1 Build order (a classic failure source)
 

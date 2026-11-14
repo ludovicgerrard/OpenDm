@@ -2439,7 +2439,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "opdm-app"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "opdm-core",
  "serde_json",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "opdm-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2467,7 +2467,7 @@ dependencies = [
 
 [[package]]
 name = "opdm-host"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "base64 0.22.1",
  "serde_json",

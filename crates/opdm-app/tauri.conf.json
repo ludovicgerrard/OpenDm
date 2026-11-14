@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenDM",
-  "version": "1.0.0",
   "identifier": "app.opendm.desktop",
   "build": {
     "frontendDist": "webui/dist"

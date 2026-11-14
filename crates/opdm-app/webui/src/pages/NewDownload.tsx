@@ -7,12 +7,13 @@
 import { useEffect, useState } from 'react'
 import {
   Link2, Search, Video, Music, FileIcon, Download, Clock, Check,
-  TriangleAlert, Loader2, ChevronDown, X,
+  TriangleAlert, Loader2, ChevronDown, X, Pause, Play,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { api } from '@/lib/tauri'
 import { useStore, type BatchItem } from '@/store/useStore'
 import { AUTO_MS, AUTO_SECONDS } from '@/lib/autoFormat'
 import { bytes, duration } from '@/lib/format'
@@ -82,7 +83,11 @@ function BatchCard({ it }: { it: BatchItem }) {
             {it.status === 'waiting' && <><Clock className="size-3.5" />Waiting</>}
             {it.status === 'parsing' && <><Loader2 className="size-3.5 animate-spin" />Analyzing…</>}
             {it.status === 'starting' && <><Loader2 className="size-3.5 animate-spin" />Adding…</>}
-            {it.status === 'started' && <span className="flex items-center gap-1.5 text-ok"><Check className="size-3.5" />Added to downloads</span>}
+            {it.status === 'started' && (!it.jobState || it.jobState === 1) && <span className="flex items-center gap-1.5 text-ok"><Check className="size-3.5" />Added to downloads</span>}
+            {it.status === 'started' && it.jobState === 2 && <><Loader2 className="size-3.5 animate-spin" />Downloading…</>}
+            {it.status === 'started' && it.jobState === 3 && <><Pause className="size-3.5" />Paused</>}
+            {it.status === 'started' && it.jobState === 4 && <span className="flex items-center gap-1.5 text-ok"><Check className="size-3.5" />Completed</span>}
+            {it.status === 'started' && it.jobState === 5 && <span className="flex items-center gap-1.5 text-destructive"><TriangleAlert className="size-3.5 shrink-0" />Download failed — see Home</span>}
             {it.status === 'error' && <span className="flex min-w-0 items-center gap-1.5 text-destructive"><TriangleAlert className="size-3.5 shrink-0" /><span className="truncate">{it.error}</span></span>}
             {ready && meta && <span className="truncate">{meta}</span>}
           </div>
@@ -98,6 +103,10 @@ function BatchCard({ it }: { it: BatchItem }) {
         <div className="flex shrink-0 items-center gap-1.5">
           {counting && <Button size="sm" variant="outline" onClick={() => edit({ deadline: null })}>Cancel</Button>}
           {ready && !counting && <Button size="sm" onClick={() => void startItem(it.id)} disabled={!it.name.trim()}><Download />Download</Button>}
+          {it.status === 'started' && it.jobId && it.jobState === 2 &&
+            <Button size="sm" variant="outline" onClick={() => void api.pause(it.jobId!)}><Pause />Pause</Button>}
+          {it.status === 'started' && it.jobId && it.jobState === 3 &&
+            <Button size="sm" variant="outline" onClick={() => void api.resume(it.jobId!)}><Play />Resume</Button>}
           <Button size="sm" variant="outline" disabled={!ready} aria-expanded={it.open} onClick={() => patchItem(it.id, { open: !it.open })}>
             Details<ChevronDown className={cn('transition-transform duration-300', it.open && 'rotate-180')} />
           </Button>

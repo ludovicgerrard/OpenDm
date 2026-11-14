@@ -5,5 +5,6 @@ pub mod dlm;
 pub mod hls;
 pub mod http;
 pub mod job;
+pub mod winjob;
 pub mod wssrv;
 pub mod ytdlp;

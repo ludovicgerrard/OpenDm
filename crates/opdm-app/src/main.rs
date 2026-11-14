@@ -168,6 +168,10 @@ fn main() {
             if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
                 if code.is_none() {
                     api.prevent_exit();
+                } else {
+                    // tray Exit (app.exit → code Some): stop every running
+                    // download and background job before the process dies
+                    dlm::engine().shutdown();
                 }
             }
         });
@@ -232,7 +236,10 @@ fn list_jobs() -> Value { jobs_json() }
 
 #[tauri::command]
 fn pause_job(id: String) {
-    if let Some(j) = dlm::engine().find(&id) { dlm::engine().pause(j) }
+    match dlm::engine().find(&id) {
+        Some(j) => dlm::engine().pause(j),
+        None => crate::diag::error(&format!("pause_job: NO job with id={id}")),
+    }
 }
 
 #[tauri::command]
@@ -247,7 +254,10 @@ fn stop_job(id: String) {
 
 #[tauri::command(rename_all = "camelCase")]
 fn remove_job(id: String, del_files: bool) {
-    if let Some(j) = dlm::engine().find(&id) { dlm::engine().remove(j, del_files) }
+    match dlm::engine().find(&id) {
+        Some(j) => { crate::diag::info(&format!("remove_job: id={id} state={} del_files={del_files}", j.state())); dlm::engine().remove(j, del_files) }
+        None => crate::diag::error(&format!("remove_job: NO job with id={id}")),
+    }
 }
 
 /// Full detail of one job, incl. per-segment progress for the details panel

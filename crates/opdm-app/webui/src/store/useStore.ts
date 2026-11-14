@@ -44,6 +44,11 @@ export type BatchItem = {
   id: string
   url: string
   status: BatchStatus
+  /** Backend job id once this card's download was handed to the engine
+   *  (parse_confirm return). Pause/Resume/Remove on the card target this job. */
+  jobId?: string
+  /** Mirror of the backend job state (1 queued … 5 failed) for the started card. */
+  jobState?: 1 | 2 | 3 | 4 | 5
   /** Latest parse-slot payload snapshot for this url (probe merges land here). */
   info: ParsePayload | null
   name: string
@@ -88,6 +93,8 @@ interface S {
   logs: Record<string, string[]>                       // ring buffer per job
   // pure UI state
   selected: string[]; activeId: string | null
+  /** Home list density (compact rows). Pure UI pref — persisted in `opendm-ui`. */
+  compactHome: boolean
   // actions
   boot(): Promise<void>
   addLinks(text: string): void
@@ -99,7 +106,7 @@ interface S {
   startItem(id: string): Promise<void>
   routeParse(p: ParsePayload, opts?: { navigate?: boolean }): boolean
   cancelParse(): Promise<void>
-  startDownload(req: { url: string; kind: 'ytdlp' | 'classic'; filename: string; fmt: string; dir?: string; referer?: string | null; cookies?: string | null }): Promise<void>
+  startDownload(req: { url: string; kind: 'ytdlp' | 'classic'; filename: string; fmt: string; dir?: string; referer?: string | null; cookies?: string | null }): Promise<string | undefined>
   refreshJobs(): Promise<void>
   refreshTools(): Promise<void>
   applyJobEvent(p: JobEvent): void
@@ -110,6 +117,7 @@ interface S {
   patch(id: string, p: Partial<Download>): void
   upsert(d: Download): void
   setActive(id: string | null): void
+  setCompactHome(v: boolean): void
   toggle(id: string): void
   toggleAll(): void
   remove(ids: string[], deleteFiles?: boolean): Promise<void>
@@ -135,6 +143,7 @@ export const useStore = create<S>()(persist((set, get) => ({
   batch: [], batchAdded: 0,
   logs: {},
   selected: [], activeId: null,
+  compactHome: false,
 
   boot: async () => {
     if (booting) return booting
@@ -245,14 +254,27 @@ export const useStore = create<S>()(persist((set, get) => ({
       recentlyRemoved.set(it.url, Date.now())
       void get().cancelParse()
     }
+    if (it.jobId) {
+      // the backend job outlives the card: kill the yt-dlp child (cancel flag →
+      // the watch loop), drop the partials, and refresh so the Home row goes too
+      recentlyRemoved.set(it.url, Date.now())
+      void api.remove([it.jobId], true)
+      void get().refreshJobs()
+    }
     set(s => ({ batch: s.batch.filter(i => i.id !== id) }))
     void get().pump()
   },
 
-  clearBatch: () => set(s => ({
-    // cards mid-flight stay; waiting/ready/started/error cards go
-    batch: s.batch.filter(i => i.status === 'parsing' || i.status === 'starting'),
-  })),
+  clearBatch: () => {
+    // started cards hold real backend jobs — stopping the engine kills their
+    // yt-dlp children (same contract as a single-card remove)
+    const jobs = get().batch.filter(i => i.jobId).map(i => i.jobId!)
+    if (jobs.length) { void api.remove(jobs, true); void get().refreshJobs() }
+    set(s => ({
+      // cards mid-flight stay; waiting/ready/started/error cards go
+      batch: s.batch.filter(i => i.status === 'parsing' || i.status === 'starting'),
+    }))
+  },
 
   setAuto: async (v) => {
     // persist ONLY this flag: rebuild the saved settings from the backend —
@@ -275,13 +297,15 @@ export const useStore = create<S>()(persist((set, get) => ({
     if (!it || it.status !== 'ready' || !it.info) return
     get().patchItem(id, { status: 'starting', deadline: null, parsingSince: undefined })
     try {
-      await get().startDownload({
+      const jobId = await get().startDownload({
         url: it.info.url, kind: it.info.kind,
         filename: it.name.trim(), dir: it.dir,
         fmt: it.info.kind === 'ytdlp' ? rowFmt(it.info.rows?.[Number(it.fmt) || 0]) : '',
         referer: it.info.referer, cookies: it.info.cookies,
       })
-      get().patchItem(id, { status: 'started' })
+      // the card keeps the backend job id: Pause/Resume/Remove on the card
+      // drive that job (and removing the card must stop the download)
+      get().patchItem(id, { status: 'started', jobId, jobState: 2 })
     } catch (e) {
       get().patchItem(id, { status: 'error', error: String(e) })
     }
@@ -373,8 +397,9 @@ export const useStore = create<S>()(persist((set, get) => ({
   },
 
   startDownload: async (req) => {
-    await api.start(req)
+    const jobId = await api.start(req)
     await get().refreshJobs()
+    return jobId
   },
 
   refreshJobs: async () => {
@@ -392,7 +417,12 @@ export const useStore = create<S>()(persist((set, get) => ({
       if (activeId && !known.has(activeId)) activeId = next[0]?.id ?? null // dock holds a job when the list is non-empty
       const logs: Record<string, string[]> = {}
       for (const [id, v] of Object.entries(s.logs)) if (known.has(id)) logs[id] = v
-      return { downloads: next, activeId, logs }
+      // reconcile the batch cards' job-state mirror too (covers missed events)
+      const stateById = new Map(jobs.map(j => [j.id, j.state] as const))
+      const batch = s.batch.some(c => c.jobId)
+        ? s.batch.map(c => c.jobId && stateById.has(c.jobId) ? { ...c, jobState: stateById.get(c.jobId)! } : c)
+        : s.batch
+      return { downloads: next, activeId, logs, batch }
     })
   },
 
@@ -407,6 +437,9 @@ export const useStore = create<S>()(persist((set, get) => ({
     } else {
       // unknown ids are ignored — the next poll adds the row (§4.5)
       get().patch(p.id, { status: STATE_STATUS[p.state], error: p.error ?? undefined })
+      // mirror the job state into its batch card (Pause/Resume there, §8)
+      const card = get().batch.find(i => i.jobId === p.id)
+      if (card) get().patchItem(card.id, { jobState: p.state })
     }
   },
 
@@ -445,6 +478,7 @@ export const useStore = create<S>()(persist((set, get) => ({
   patch: (id, p) => set(s => ({ downloads: s.downloads.map(d => d.id === id ? { ...d, ...p } : d) })),
   upsert: (d) => set(s => ({ downloads: s.downloads.some(x => x.id === d.id) ? s.downloads.map(x => x.id === d.id ? d : x) : [d, ...s.downloads] })),
   setActive: (id) => set({ activeId: id }),
+  setCompactHome: (v) => set({ compactHome: v }),
   toggle: (id) => set(s => ({ selected: s.selected.includes(id) ? s.selected.filter(x => x !== id) : [...s.selected, id] })),
   toggleAll: () => set(s => ({ selected: s.selected.length === s.downloads.length ? [] : s.downloads.map(d => d.id) })),
 
@@ -498,10 +532,10 @@ export const useStore = create<S>()(persist((set, get) => ({
   name: 'opendm-ui',
   storage: createJSONStorage(() => localStorage),
   // persist ONLY UI prefs (§4.1 rule 2) — jobs/settings/tools are Rust-owned
-  partialize: (s) => ({ settings: { theme: s.settings.theme, language: s.settings.language } }),
+  partialize: (s) => ({ settings: { theme: s.settings.theme, language: s.settings.language }, compactHome: s.compactHome }),
   merge: (persisted, current) => {
-    const p = persisted as { settings?: { theme?: Settings['theme']; language?: string } }
-    return { ...current, settings: { ...current.settings, theme: p.settings?.theme ?? current.settings.theme, language: p.settings?.language ?? current.settings.language } }
+    const p = persisted as { settings?: { theme?: Settings['theme']; language?: string }; compactHome?: boolean }
+    return { ...current, settings: { ...current.settings, theme: p.settings?.theme ?? current.settings.theme, language: p.settings?.language ?? current.settings.language }, compactHome: p.compactHome ?? current.compactHome }
   },
 }))
 

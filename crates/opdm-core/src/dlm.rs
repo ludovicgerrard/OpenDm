@@ -141,7 +141,39 @@ impl Engine {
     }
 
     pub fn pause(&self, jc: Arc<JobCore>) {
+        crate::diag::info(&format!("pause: id={} state={} (running={} )", jc.meta.id, jc.state(), jc.state() == job::ST_RUNNING));
         if jc.state() == job::ST_RUNNING { jc.pause.store(true, Ordering::SeqCst); }
+    }
+
+    /// Graceful stop for app exit (tray Exit): pause every running job — its
+    /// coordinator sees the flag and kills the yt-dlp tree via the Job Object —
+    /// then leave a clean PAUSED state and persist. Also clears the parse slot
+    /// so no stale "analyzing" payload resurrects a card on the next boot.
+    /// A hard kill is still safe: the per-spawn Job Objects take every
+    /// yt-dlp/ffmpeg tree down when the process dies (KILL_ON_JOB_CLOSE).
+    pub fn shutdown(&self) {
+        let jobs = self.jobs.lock().unwrap().clone();
+        for jc in &jobs {
+            if jc.state() == job::ST_RUNNING { jc.pause.store(true, Ordering::SeqCst); }
+        }
+        // bounded grace for the watch loops (200 ms poll → tree kill → their own
+        // pause-branch persist). QUEUED would auto-start on the next launch —
+        // everything must land in ST_PAUSED.
+        std::thread::sleep(Duration::from_millis(600));
+        for jc in &jobs {
+            if jc.state() == job::ST_RUNNING {
+                // leave pause=true: the coordinator's own post-exit path needs
+                // it to land in ST_PAUSED (not the error branch); resume()
+                // clears the flags when the user continues the download
+                jc.set_state(job::ST_PAUSED);
+                *jc.stage.lock().unwrap() = String::new();
+                jc.speed_bits.store(0, Ordering::Relaxed);
+                self.emit_state(jc);
+            }
+        }
+        self.persist();
+        crate::ytdlp::parse_state_clear();
+        crate::diag::info("shutdown: all running jobs stopped, state persisted");
     }
 
     pub fn resume(&self, jc: Arc<JobCore>) { self.start(jc); }
@@ -160,29 +192,43 @@ impl Engine {
             std::fs::remove_dir_all(jc.parts_dir()).ok();
             // classic job: the file is folder/name. ytdlp job: tracked outputs
             // (+ .part/.ytdl fragments of the same stem) live in the folder.
+            // A job killed mid-download may have NO tracked outputs yet (they
+            // arrive on completion) — so also sweep the folder for fragments
+            // whose name starts with the job's --output base (the job title):
+            // yt-dlp names per-stream fragments `<base>.<fmt>.<ext>.part`.
             let is_ytdlp = jc.kind.lock().unwrap().as_str() == "ytdlp";
             if is_ytdlp {
                 let outs = jc.outs.lock().unwrap().clone();
-                if !outs.is_empty() {
-                    let mut stems: Vec<String> = Vec::new();
-                    for p in outs {
-                        let pb = PathBuf::from(&p);
-                        let _ = std::fs::remove_file(&pb);
-                        if let (Some(d), Some(n)) = (pb.parent(), p.rsplit_once('.')) {
-                            stems.push(p.clone());
-                            // same stem fragments + temp suffixes
-                            let stem = n.0;
-                            if let Ok(rd) = std::fs::read_dir(d) {
-                                for e in rd.flatten() {
-                                    let nm = e.file_name().to_string_lossy().to_string();
-                                    if nm == p || nm == format!("{stem}.part") || nm == format!("{stem}.ytdl") {
-                                        let _ = std::fs::remove_file(e.path());
-                                    }
+                let base = jc.name();
+                let outs_empty = outs.is_empty();
+                for p in &outs {
+                    let pb = PathBuf::from(&p);
+                    let _ = std::fs::remove_file(&pb);
+                    if let (Some(d), Some(n)) = (pb.parent(), p.rsplit_once('.')) {
+                        // same stem fragments + temp suffixes
+                        let stem = n.0;
+                        if let Ok(rd) = std::fs::read_dir(d) {
+                            for e in rd.flatten() {
+                                let nm = e.file_name().to_string_lossy().to_string();
+                                if nm == *p || nm == format!("{stem}.part") || nm == format!("{stem}.ytdl") {
+                                    let _ = std::fs::remove_file(e.path());
                                 }
                             }
                         }
                     }
-                    let _ = stems;
+                }
+                if outs_empty {
+                    crate::diag::info(&format!("remove: ytdlp job {} had no tracked outputs — fragment sweep by name prefix", jc.meta.id));
+                }
+                // always sweep: fragments belong to THIS job only (its --output
+                // template base is the title) and are junk once the job is gone
+                if let Ok(rd) = std::fs::read_dir(jc.meta.folder.clone()) {
+                    for e in rd.flatten() {
+                        let nm = e.file_name().to_string_lossy().to_string();
+                        if nm.starts_with(&base) && (nm.ends_with(".part") || nm.ends_with(".ytdl")) {
+                            let _ = std::fs::remove_file(e.path());
+                        }
+                    }
                 }
             } else {
                 std::fs::remove_file(jc.meta.folder.join(jc.name())).ok();
@@ -604,6 +650,11 @@ fn ytdlp_coordinator(jc: Arc<JobCore>) {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
+    // Job Object: yt-dlp.exe is a PyInstaller onefile build — it spawns a second
+    // yt-dlp.exe (the worker). Killing only our child leaves that worker running
+    // and the download continues after pause/delete (§ winjob).
+    #[cfg(windows)]
+    let wjob = crate::winjob::KillJob::new();
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -614,6 +665,8 @@ fn ytdlp_coordinator(jc: Arc<JobCore>) {
             return;
         }
     };
+    #[cfg(windows)]
+    if let Some(j) = &wjob { j.assign(&child); }
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let errbuf = Arc::new(Mutex::new(String::new()));
@@ -645,14 +698,20 @@ fn ytdlp_coordinator(jc: Arc<JobCore>) {
     // watch loop: reacts to pause/cancel by killing the child
     let mut killed = false;
     let mut status: Option<std::process::ExitStatus> = None;
+    crate::diag::info(&format!("ytdlp job {}: watch loop start (child pid={})", jc.meta.id, child.id()));
     loop {
         std::thread::sleep(Duration::from_millis(200));
         if (jc.pause.load(Ordering::SeqCst) || jc.cancel.load(Ordering::SeqCst)) && !killed {
+            crate::diag::info(&format!("ytdlp job {}: pause/cancel seen → kill child pid={}", jc.meta.id, child.id()));
+            // kill the WHOLE tree (bootloader + PyInstaller worker), then the
+            // direct child as a fallback if the job object could not be created
+            #[cfg(windows)]
+            if let Some(j) = &wjob { j.terminate(1); }
             let _ = child.kill();
             killed = true;
         }
         match child.try_wait() {
-            Ok(Some(st)) => { status = Some(st); break; }
+            Ok(Some(st)) => { crate::diag::info(&format!("ytdlp job {}: child pid={} exited {:?}", jc.meta.id, child.id(), st.code())); status = Some(st); break; }
             Ok(None) => continue,
             Err(_) => {
                 jc.set_err("failed to wait for yt-dlp".into());

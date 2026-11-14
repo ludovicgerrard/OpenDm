@@ -971,7 +971,19 @@ pub fn parse_info(url: &str, cookies: Option<&str>) -> Result<YtInfo, String> {
     let kept = cookies_to_file(cookies, url, &dir, "parse");
     let mut args = parse_args(kept.as_deref());
     args.push(normalize_watch_url(url));
-    let out = spawn_cmd(&yt, &args).output().map_err(|e| format!("spawn yt-dlp: {e}"))?;
+    // spawn (not .output()) so the child can be wrapped in a Job Object: on app
+    // exit the -J tree (incl. its PyInstaller worker) dies with the process
+    // (§ winjob KILL_ON_JOB_CLOSE).
+    #[cfg(windows)]
+    let wjob = crate::winjob::KillJob::new();
+    let mut child = spawn_cmd(&yt, &args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn yt-dlp: {e}"))?;
+    #[cfg(windows)]
+    if let Some(j) = &wjob { j.assign(&child); }
+    let out = child.wait_with_output().map_err(|e| format!("wait yt-dlp: {e}"))?;
     if let Some(f) = kept {
         let _ = std::fs::remove_file(f);
     }
