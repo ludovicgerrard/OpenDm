@@ -9,6 +9,8 @@ engine.log, exe metadata — all read the workspace version from `Cargo.toml`).
 ## [1.1.0] — 2026-11-14
 
 ### Added
+- **MIT LICENSE** — free use, modification and distribution, including
+  commercial use (`LICENSE`, declared in the crate metadata).
 - **Compact view on the Home downloads list** — a `Compact` switch (right end of
   the select-all header line) toggles dense single-line rows; preference
   persists across restarts (`opendm-ui` store, `compactHome`).

@@ -111,3 +111,8 @@ technical reference (contracts, file formats, build pitfalls).
 ```bash
 cargo test -p opdm-core   # engine tests, runs on the Linux host
 ```
+
+## License
+
+[MIT](LICENSE) — free to use, modify and distribute, **including commercial
+use**; the only condition is keeping the copyright notice.
