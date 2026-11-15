@@ -1,0 +1,13 @@
+target/
+crates/**/target/
+*.exe
+*.pdb
+.DS_Store
+ext_priv.pem
+ext_key.txt
+*.pem
+node_modules/
+crates/opdm-app/webui/dist/
+crates/opdm-app/gen/
+deploy.sh
+.claude/

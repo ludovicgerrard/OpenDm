@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenDM</title>
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      // apply the saved theme before first paint (no flash); default = dark
+      try {
+        var st = (JSON.parse(localStorage.getItem('opendm-ui') || '{}').state || {}).settings;
+        var t = (st && st.theme) || 'dark';
+        document.documentElement.classList.toggle('dark', t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches));
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
