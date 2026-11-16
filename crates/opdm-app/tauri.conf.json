@@ -3,7 +3,7 @@
   "productName": "OpenDM",
   "identifier": "app.opendm.desktop",
   "build": {
-    "beforeBuildCommand": "npm --prefix webui run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "webui/dist"
   },
   "app": {
@@ -25,7 +25,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.ico"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser"
