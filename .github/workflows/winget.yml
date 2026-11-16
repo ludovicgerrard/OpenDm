@@ -1,0 +1,18 @@
+# winget automation (playbook §5.4): on every published release, open the
+# version-update PR on microsoft/winget-pkgs. Runs ONLY on release:released —
+# the user publishes drafts after the Windows test gate, so untested builds
+# never reach winget. Dormant until the first manual PR is merged and the
+# package id exists in the winget catalog.
+name: Publish to winget
+on:
+  release:
+    types: [released]
+jobs:
+  winget:
+    runs-on: windows-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: LudovicGerrard.OpenDM
+          installers-regex: '-setup\.exe$'   # NSIS installer only (not the .msi)
+          token: ${{ secrets.WINGET_TOKEN }}
