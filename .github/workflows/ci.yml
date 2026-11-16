@@ -1,0 +1,37 @@
+# CI: prove every platform compiles AND bundles — no release, no tag.
+# Adapted from the winget publish playbook (Phase 2) + Tauri v2 GitHub docs.
+name: CI
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, args: '' }
+          - { os: macos-latest,   args: '--target aarch64-apple-darwin' }
+          - { os: macos-latest,   args: '--target x86_64-apple-darwin' }
+          - { os: ubuntu-22.04,   args: '' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux dependencies (Tauri v2)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin   # harmless on non-mac runners
+      - uses: swatinem/rust-cache@v2
+      - run: npm ci
+        working-directory: crates/opdm-app/webui
+      - uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: crates/opdm-app
+          args: ${{ matrix.args }}
