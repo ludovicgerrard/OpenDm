@@ -45,6 +45,8 @@ jobs:
           releaseBody: |
             See CHANGELOG.md for the full notes.
             Windows is tested before publishing. macOS and Linux builds are provided untested.
+            Note: the browser-capture extension is not part of the installer yet — it is
+            documented as a load-unpacked workflow (see README) and needs a store id later.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
