@@ -1,0 +1,50 @@
+# Release: triggered by a version tag, ALWAYS creates a DRAFT release.
+# The user tests the Windows installer from the draft, then publishes it
+# themselves (publishing is what later unlocks the winget automation).
+# macOS/Linux installers ship untested (playbook rule 4).
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, args: '' }
+          - { os: macos-latest,   args: '--target aarch64-apple-darwin' }
+          - { os: macos-latest,   args: '--target x86_64-apple-darwin' }
+          - { os: ubuntu-22.04,   args: '' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux dependencies (Tauri v2)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin   # harmless on non-mac runners
+      - uses: swatinem/rust-cache@v2
+      - run: npm ci
+        working-directory: crates/opdm-app/webui
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/opdm-app
+          tagName: ${{ github.ref_name }}
+          releaseName: 'OpenDM ${{ github.ref_name }}'
+          releaseBody: |
+            See CHANGELOG.md for the full notes.
+            Windows is tested before publishing. macOS and Linux builds are provided untested.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
